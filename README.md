@@ -1,1 +1,1 @@
-# typesense-prometheus-exporter
+# WIP: typesense-prometheus-exporter

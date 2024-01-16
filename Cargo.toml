@@ -6,3 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+axum = "0.7.3"
+clap = { version = "4.4.16", features = ["derive", "cargo", "env"] }
+futures = "0.3.30"
+prometheus = "0.13.3"
+reqwest = { version = "0.11.23", features = ["json"] }
+serde = { version = "1.0.195", features = ["derive"] }
+serde_json = "1.0.111"
+tokio = { version = "1.35.1", features = ["full"] }
+tracing-subscriber = "0.3.18"
