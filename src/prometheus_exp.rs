@@ -328,14 +328,16 @@ pub(crate) async fn generate_metrics(
     )
     .unwrap();
 
-    // Set gauge values for typesense_stats_latency_ms
-    typesense_stats_latency_ms
-        .with_label_values(&["ts-tenant.com", "8108", "GET /metrics.json"])
-        .set(101.0);
-    typesense_stats_latency_ms
-        .with_label_values(&["ts-tenant.com", "8108", "GET /stats.json"])
-        .set(0.0);
-    // ... Add more metrics as needed
+    for (key, value) in ts_stats.latency_ms.iter() {
+        // println!("{} {}", key, value);
+        typesense_stats_latency_ms
+            .with_label_values(&[
+                &cli_args.typesense_host,
+                &cli_args.typesense_port.to_string(),
+                key,
+            ])
+            .set(value.to_string().parse::<f64>().unwrap_or(0.0));
+    }
 
     // Create a GaugeVec for typesense_stats_requests_per_second
     let typesense_stats_requests_per_second = register_gauge_vec_with_registry!(
@@ -346,14 +348,16 @@ pub(crate) async fn generate_metrics(
     )
     .unwrap();
 
-    // Set gauge values for typesense_stats_requests_per_second
-    typesense_stats_requests_per_second
-        .with_label_values(&["ts-tenant.com", "8108", "GET /metrics.json"])
-        .set(0.3);
-    typesense_stats_requests_per_second
-        .with_label_values(&["ts-tenant.com", "8108", "GET /stats.json"])
-        .set(0.2);
-    // ... Add more metrics as needed
+    for (key, value) in ts_stats.requests_per_second.iter() {
+        // println!("{} {}", key, value);
+        typesense_stats_requests_per_second
+            .with_label_values(&[
+                &cli_args.typesense_host,
+                &cli_args.typesense_port.to_string(),
+                key,
+            ])
+            .set(value.to_string().parse::<f64>().unwrap_or(0.0));
+    }
 
     // Expose the metrics in Prometheus exposition format
     let encoder = TextEncoder::new();
