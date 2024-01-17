@@ -1,7 +1,7 @@
 use clap::Parser;
 
 /// Simple program to greet a person
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct CliArgs {
     /// Typesense Host url
@@ -17,7 +17,7 @@ pub struct CliArgs {
     pub(crate) typesense_api_key: String,
 
     /// Typesense port number
-    #[arg(long, env, default_value_t = 8081)]
+    #[arg(long, env, default_value_t = 8108)]
     pub(crate) typesense_port: u16,
 
     /// Bind address for internal server
@@ -27,6 +27,4 @@ pub struct CliArgs {
     /// Bind port for internal server
     #[arg(long, env, default_value_t = 8888)]
     pub(crate) exporter_bind_port: u16,
-
-
 }

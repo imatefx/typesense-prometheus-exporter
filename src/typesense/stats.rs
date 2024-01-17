@@ -1,8 +1,10 @@
-use serde_json::Map;
-use axum::Error;
-use crate::typesense::models::typesense_stats_model::TypesenseStats;
+use std::sync::Arc;
 
-pub async fn get_typesense_stats() -> Result<TypesenseStats, Error> {
+use crate::{cli::CliArgs, typesense::models::typesense_stats_model::TypesenseStats};
+use axum::Error;
+use serde_json::Map;
+
+pub async fn get_typesense_stats(args: Arc<CliArgs>) -> Result<TypesenseStats, Error> {
     let mut stats_data: TypesenseStats = TypesenseStats {
         delete_latency_ms: Some(0.0),
         delete_requests_per_second: Some(0.0),
@@ -23,9 +25,14 @@ pub async fn get_typesense_stats() -> Result<TypesenseStats, Error> {
 
     let client = reqwest::Client::new();
 
+    let url = format!(
+        "http://{}:{}/stats.json",
+        args.typesense_host, args.typesense_port
+    );
+
     let res = client
-        .get("http://<host>:8108/stats.json")
-        .header("X-TYPESENSE-API-KEY", "<key>")
+        .get(url)
+        .header("X-TYPESENSE-API-KEY", format!("{}", args.typesense_api_key))
         .send()
         .await
         .unwrap();
@@ -50,3 +57,4 @@ pub async fn get_typesense_stats() -> Result<TypesenseStats, Error> {
 
     Ok(stats_data)
 }
+

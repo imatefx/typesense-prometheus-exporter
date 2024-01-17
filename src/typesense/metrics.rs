@@ -1,7 +1,9 @@
-use axum::Error;
-use crate::typesense::models::typesense_metrics_model::TypesenseMetrics;
+use std::sync::Arc;
 
-pub async fn get_typesense_metrics() -> Result<TypesenseMetrics, Error> {
+use crate::{cli::CliArgs, typesense::models::typesense_metrics_model::TypesenseMetrics};
+use axum::Error;
+
+pub async fn get_typesense_metrics(args: Arc<CliArgs>) -> Result<TypesenseMetrics, Error> {
     let mut stats_data: TypesenseMetrics = TypesenseMetrics {
         system_cpu1_active_percentage: Some("".to_string()),
         system_cpu2_active_percentage: Some("".to_string()),
@@ -25,9 +27,16 @@ pub async fn get_typesense_metrics() -> Result<TypesenseMetrics, Error> {
 
     let client = reqwest::Client::new();
 
+    let url: String = format!(
+        "{}://{}:{}/metrics.json",
+        args.typesense_protocol, args.typesense_host, args.typesense_port
+    );
+
+    println!("url : {:?}", url);
+
     let res = client
-        .get("http://<host>:8108/metrics.json")
-        .header("X-TYPESENSE-API-KEY", "<key>")
+        .get(url)
+        .header("X-TYPESENSE-API-KEY", format!("{}", args.typesense_api_key))
         .send()
         .await
         .unwrap();
@@ -52,3 +61,4 @@ pub async fn get_typesense_metrics() -> Result<TypesenseMetrics, Error> {
 
     Ok(stats_data)
 }
+
