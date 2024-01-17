@@ -43,5 +43,3 @@ typesense-prometheus-exporter [OPTIONS] --typesense-host <TYPESENSE_HOST> --type
 
 - `-h, --help`: Print help information.
 - `-V, --version`: Print the version information.
-
-For more detailed information, please refer to the documentation within the repository.
