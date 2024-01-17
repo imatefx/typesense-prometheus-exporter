@@ -7,7 +7,7 @@ use crate::{
         typesense_metrics_model::TypesenseMetrics, typesense_stats_model::TypesenseStats,
     },
 };
-use prometheus::{register_gauge_vec_with_registry, Counter, Encoder, Opts, Registry, TextEncoder};
+use prometheus::{register_gauge_vec_with_registry, Encoder, Registry, TextEncoder};
 
 // #[tokio::main]
 

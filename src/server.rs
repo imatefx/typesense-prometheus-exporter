@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use crate::prometheus_exp;
-use crate::typesense::models::typesense_metrics_model::TypesenseMetrics;
-use crate::typesense::models::typesense_stats_model::TypesenseStats;
-use crate::typesense::stats::get_typesense_stats;
-use crate::{cli::CliArgs, typesense::metrics::get_typesense_metrics};
+use crate::{
+    cli::CliArgs,
+    typesense::{metrics::get_typesense_metrics, stats::get_typesense_stats},
+};
 
 use axum::extract::State;
 // use crate::typesense::metrics;
