@@ -4,26 +4,7 @@ use crate::{cli::CliArgs, typesense::models::typesense_metrics_model::TypesenseM
 use axum::Error;
 
 pub async fn get_typesense_metrics(args: Arc<CliArgs>) -> Result<TypesenseMetrics, Error> {
-    let mut stats_data: TypesenseMetrics = TypesenseMetrics {
-        system_cpu1_active_percentage: Some("".to_string()),
-        system_cpu2_active_percentage: Some("".to_string()),
-        system_cpu3_active_percentage: Some("".to_string()),
-        system_cpu4_active_percentage: Some("".to_string()),
-        system_cpu_active_percentage: Some("".to_string()),
-        system_disk_total_bytes: Some("".to_string()),
-        system_disk_used_bytes: Some("".to_string()),
-        system_memory_total_bytes: Some("".to_string()),
-        system_memory_used_bytes: Some("".to_string()),
-        system_network_received_bytes: Some("".to_string()),
-        system_network_sent_bytes: Some("".to_string()),
-        typesense_memory_active_bytes: Some("".to_string()),
-        typesense_memory_allocated_bytes: Some("".to_string()),
-        typesense_memory_fragmentation_ratio: Some("".to_string()),
-        typesense_memory_mapped_bytes: Some("".to_string()),
-        typesense_memory_metadata_bytes: Some("".to_string()),
-        typesense_memory_resident_bytes: Some("".to_string()),
-        typesense_memory_retained_bytes: Some("".to_string()),
-    };
+    let mut stats_data: TypesenseMetrics = TypesenseMetrics::default();
 
     let client = reqwest::Client::new();
 
@@ -32,7 +13,7 @@ pub async fn get_typesense_metrics(args: Arc<CliArgs>) -> Result<TypesenseMetric
         args.typesense_protocol, args.typesense_host, args.typesense_port
     );
 
-    println!("url : {:?}", url);
+    // println!("url : {:?}", url);
 
     let res = client
         .get(url)
@@ -43,12 +24,21 @@ pub async fn get_typesense_metrics(args: Arc<CliArgs>) -> Result<TypesenseMetric
 
     match res.status() {
         reqwest::StatusCode::OK => {
+            // let json_str = res.text().await.unwrap();
+            //     println!("json_str {:?}", json_str);
+
+            //  let deserialized_metrics: TypesenseMetrics = serde_json::from_str(json_str.as_str()).unwrap();
+            //     println!("deserialized_metrics  {:?}", deserialized_metrics);
+
             match res.json::<TypesenseMetrics>().await {
                 Ok(parsed) => {
                     stats_data = parsed;
-                    println!("Success! {:#?}", stats_data)
+                    //                println!("Success! {:#?}", stats_data)
                 }
-                Err(_) => println!("Hm, the response didn't match the shape we expected."),
+                Err(er) => println!(
+                    "Hm, the response didn't match the shape we expected. {:?}",
+                    er
+                ),
             };
         }
         reqwest::StatusCode::UNAUTHORIZED => {
@@ -61,4 +51,3 @@ pub async fn get_typesense_metrics(args: Arc<CliArgs>) -> Result<TypesenseMetric
 
     Ok(stats_data)
 }
-

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::prometheus_exp;
 use crate::typesense::models::typesense_metrics_model::TypesenseMetrics;
 use crate::typesense::models::typesense_stats_model::TypesenseStats;
 use crate::typesense::stats::get_typesense_stats;
@@ -9,6 +10,7 @@ use axum::extract::State;
 // use crate::typesense::metrics;
 // use serde::Deserialize;
 use axum::{routing::get, Router};
+use futures::future;
 
 // #[tokio::main]
 pub(crate) async fn main_server(args: CliArgs) {
@@ -32,19 +34,36 @@ pub(crate) async fn main_server(args: CliArgs) {
 
 // basic handler that responds with a static string
 async fn root() -> &'static str {
-    "Hello, World! cool nice"
+    "Hello, World!"
 }
 
 async fn metrics_route_handler(State(args): State<Arc<CliArgs>>) -> String {
-    println!("Args :  {:?}", args.exporter_bind_address);
-    let data: TypesenseMetrics = get_typesense_metrics(args.clone()).await.unwrap();
-    // format!("get_typesense_metrics, {:?}", data);
+    // println!("Args :  {:?}", args.exporter_bind_address);
+    //    let data: TypesenseMetrics = get_typesense_metrics(args.clone()).await.unwrap();
+    //
+    //    let data2: TypesenseStats = get_typesense_stats(args.clone()).await.unwrap();
 
-    let data2: TypesenseStats = get_typesense_stats(args.clone()).await.unwrap();
-    format!(
-        "get_typesense_metrics : {:#?}   get_typesense_stats : {:#?}",
-        data, data2
+    let (metrics_data, stats_data) = future::join(
+        get_typesense_metrics(args.clone()),
+        get_typesense_stats(args.clone()),
     )
+    .await;
+
+    let promdata = prometheus_exp::generate_metrics(
+        metrics_data.unwrap().clone(),
+        stats_data.unwrap().clone(),
+        args.clone(),
+    )
+    .await;
+
+    //  format!(
+    //      "get_typesense_metrics : {:#?}   get_typesense_stats : {:#?}",
+    //      data, data2
+    //  )
+
+    //    format!("{:#?}", promdata);
+
+    return promdata;
 }
 
 // #[tokio::main]
