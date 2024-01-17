@@ -8,9 +8,5 @@ pub mod typesense;
 #[tokio::main]
 async fn main() {
     let args = cli::CliArgs::parse();
-    // println!("{:#?}", args);
-    server::main_server(args).await;
-    // println!("Hello, world!");
-
-    // print all values in debug format
+    server::start_metrics_server(args).await;
 }

@@ -9,29 +9,21 @@ use crate::{
 };
 use prometheus::{register_gauge_vec_with_registry, Encoder, Registry, TextEncoder};
 
-// #[tokio::main]
-
 pub(crate) async fn generate_metrics(
     ts_metrics: TypesenseMetrics,
     ts_stats: TypesenseStats,
     cli_args: Arc<CliArgs>,
 ) -> String {
-    let r = Registry::new();
-    // r.register(Box::new(typesense_metrics.clone())).unwrap();
-    // r.register(Box::new(typesense_stats.clone())).unwrap();
-    // r.register(Box::new(typesense_stats_latency_ms.clone())).unwrap();
-    // r.register(Box::new(typesense_stats_requests_per_second.clone())).unwrap();
+    let registry = Registry::new();
 
     let typesense_metrics = register_gauge_vec_with_registry!(
         "typesense_metrics",
         "Data received through the metrics api of typesense",
         &["host", "port", "key"],
-        r
+        registry
     )
     .unwrap();
 
-    // Set gauge values for typesense_metrics
-    // typesense_metrics.with_label_values(&["ts-tenant.com", "8108", "system_cpu1_active_percentage"]).set(0.00);
     typesense_metrics
         .with_label_values(&[
             &cli_args.typesense_host,
@@ -224,20 +216,11 @@ pub(crate) async fn generate_metrics(
                 .unwrap_or(0.0),
         );
 
-    // typesense_metrics
-    //     .with_label_values(&["ts-tenant.com", "8108", "system_cpu2_active_percentage"])
-    //     .set(0.00);
-    // typesense_metrics
-    //     .with_label_values(&["ts-tenant.com", "8108", "system_cpu_active_percentage"])
-    //     .set(0.00);
-    // // ... Add more metrics as needed
-
-    // Create a GaugeVec for typesense_stats
     let typesense_stats = register_gauge_vec_with_registry!(
         "typesense_stats",
         "Data received through the stats api of typesense",
         &["host", "port", "key"],
-        r
+        registry
     )
     .unwrap();
 
@@ -319,17 +302,15 @@ pub(crate) async fn generate_metrics(
         ])
         .set(ts_stats.write_requests_per_second);
 
-    // Create a GaugeVec for typesense_stats_latency_ms
     let typesense_stats_latency_ms = register_gauge_vec_with_registry!(
         "typesense_stats_latency_ms",
         "Each endpoint latency in ms from stats api",
         &["host", "port", "key"],
-        r
+        registry
     )
     .unwrap();
 
     for (key, value) in ts_stats.latency_ms.iter() {
-        // println!("{} {}", key, value);
         typesense_stats_latency_ms
             .with_label_values(&[
                 &cli_args.typesense_host,
@@ -339,17 +320,15 @@ pub(crate) async fn generate_metrics(
             .set(value.to_string().parse::<f64>().unwrap_or(0.0));
     }
 
-    // Create a GaugeVec for typesense_stats_requests_per_second
     let typesense_stats_requests_per_second = register_gauge_vec_with_registry!(
         "typesense_stats_requests_per_second",
         "Each endpoint rps from stats api",
         &["host", "port", "key"],
-        r
+        registry
     )
     .unwrap();
 
     for (key, value) in ts_stats.requests_per_second.iter() {
-        // println!("{} {}", key, value);
         typesense_stats_requests_per_second
             .with_label_values(&[
                 &cli_args.typesense_host,
@@ -359,16 +338,12 @@ pub(crate) async fn generate_metrics(
             .set(value.to_string().parse::<f64>().unwrap_or(0.0));
     }
 
-    // Expose the metrics in Prometheus exposition format
     let encoder = TextEncoder::new();
-    let metric_families = r.gather();
+    let metric_families = registry.gather();
     let mut buffer = Vec::new();
     encoder.encode(&metric_families, &mut buffer).unwrap();
 
-    // Convert the buffer to a String and print it
     let metric_line = String::from_utf8(buffer).unwrap();
-
-    //   println!("{}", metric_line);
 
     return metric_line;
 }

@@ -6,8 +6,6 @@ use axum::Error;
 pub async fn get_typesense_stats(args: Arc<CliArgs>) -> Result<TypesenseStats, Error> {
     let mut stats_data: TypesenseStats = TypesenseStats::default();
 
-    //    println!("{:?}", stats_data);
-
     let client = reqwest::Client::new();
 
     let url = format!(
@@ -27,7 +25,6 @@ pub async fn get_typesense_stats(args: Arc<CliArgs>) -> Result<TypesenseStats, E
             match res.json::<TypesenseStats>().await {
                 Ok(parsed) => {
                     stats_data = parsed;
-                    // println!("Success! {:#?}", stats_data)
                 }
                 Err(_) => println!("Hm, the response didn't match the shape we expected."),
             };
