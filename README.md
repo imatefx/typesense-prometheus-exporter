@@ -40,6 +40,7 @@ docker run --name="example-ts-prom-exp" \
            -e "TYPESENSE_PROTOCOL=http" \
            -e "TYPESENSE_API_KEY=tsAPIKEY" \
            -e "TYPESENSE_PORT=8108" \
+           -p 8888:8888 \
            imatefx/typesense-prometheus-exporter
 ```
 
