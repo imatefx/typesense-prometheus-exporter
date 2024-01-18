@@ -10,6 +10,7 @@ axum = "0.7.3"
 clap = { version = "4.4.16", features = ["derive", "cargo", "env"] }
 futures = "0.3.30"
 prometheus = "0.13.3"
+regex = "1.10.2"
 reqwest = { version = "0.11.23", features = ["json"] }
 serde = { version = "1.0.195", features = ["derive"] }
 serde_json = "1.0.111"

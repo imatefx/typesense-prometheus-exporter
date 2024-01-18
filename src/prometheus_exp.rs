@@ -8,6 +8,7 @@ use crate::{
     },
 };
 use prometheus::{register_gauge_vec_with_registry, Encoder, Registry, TextEncoder};
+use regex::Regex;
 
 pub(crate) async fn generate_metrics(
     ts_metrics: TypesenseMetrics,
@@ -310,6 +311,13 @@ pub(crate) async fn generate_metrics(
     )
     .unwrap();
 
+    let typesense_stats_latency_ms_by_collection = register_gauge_vec_with_registry!(
+        "typesense_stats_latency_ms_by_collection",
+        "Each endpoint latency in ms from stats api",
+        &["host", "port", "key", "method", "collection_name", "action"],
+        registry
+    )
+    .unwrap();
     for (key, value) in ts_stats.latency_ms.iter() {
         typesense_stats_latency_ms
             .with_label_values(&[
@@ -318,12 +326,42 @@ pub(crate) async fn generate_metrics(
                 key,
             ])
             .set(value.to_string().parse::<f64>().unwrap_or(0.0));
+
+        match parse_string(key) {
+            Some((method, collection_name, action)) => {
+                println!("Method: {}", method);
+                println!("Collection Name: {}", collection_name);
+                println!("Action: {}", action);
+
+                typesense_stats_latency_ms_by_collection
+                    .with_label_values(&[
+                        &cli_args.typesense_host,
+                        &cli_args.typesense_port.to_string(),
+                        key,
+                        method.as_str(),
+                        collection_name.as_str(),
+                        action.as_str(),
+                    ])
+                    .set(value.to_string().parse::<f64>().unwrap_or(0.0));
+            }
+            None => {
+                println!("No match found");
+            }
+        }
     }
 
     let typesense_stats_requests_per_second = register_gauge_vec_with_registry!(
         "typesense_stats_requests_per_second",
         "Each endpoint rps from stats api",
         &["host", "port", "key"],
+        registry
+    )
+    .unwrap();
+
+    let typesense_stats_requests_per_second_by_collection = register_gauge_vec_with_registry!(
+        "typesense_stats_requests_per_second_by_collection",
+        "Each endpoint rps from stats api",
+        &["host", "port", "key", "method", "collection_name", "action"],
         registry
     )
     .unwrap();
@@ -336,6 +374,28 @@ pub(crate) async fn generate_metrics(
                 key,
             ])
             .set(value.to_string().parse::<f64>().unwrap_or(0.0));
+
+        match parse_string(key) {
+            Some((method, collection_name, action)) => {
+                println!("Method: {}", method);
+                println!("Collection Name: {}", collection_name);
+                println!("Action: {}", action);
+
+                typesense_stats_requests_per_second_by_collection
+                    .with_label_values(&[
+                        &cli_args.typesense_host,
+                        &cli_args.typesense_port.to_string(),
+                        key,
+                        method.as_str(),
+                        collection_name.as_str(),
+                        action.as_str(),
+                    ])
+                    .set(value.to_string().parse::<f64>().unwrap_or(0.0));
+            }
+            None => {
+                println!("No match found");
+            }
+        }
     }
 
     let encoder = TextEncoder::new();
@@ -346,4 +406,16 @@ pub(crate) async fn generate_metrics(
     let metric_line = String::from_utf8(buffer).unwrap();
 
     return metric_line;
+}
+
+fn parse_string(input: &str) -> Option<(String, String, String)> {
+    let pattern = r"(\w+)\s+/collections/([^/]+)/([^/]+/[^/]+)";
+    let re = Regex::new(pattern).unwrap();
+
+    re.captures(input).map(|caps| {
+        let method = caps.get(1).unwrap().as_str().to_string();
+        let collection_name = caps.get(2).unwrap().as_str().to_string();
+        let action = caps.get(3).unwrap().as_str().to_string();
+        (method, collection_name, action)
+    })
 }
