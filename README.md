@@ -1,4 +1,7 @@
 # Typesense Prometheus Exporter
+![Typesense-Metrics-Dashboards-Dashboards-Grafana](https://github.com/imatefx/typesense-prometheus-exporter/assets/3025904/36daa26f-b217-4c1c-9404-2a480a19efe2)
+![Typesense-By-Collection-Dashboards-Dashboards-Grafana](https://github.com/imatefx/typesense-prometheus-exporter/assets/3025904/026e6ed9-2a9b-4800-8ae6-2f90aca9fcb7)
+![Typesense-Stats-Dashboards-Dashboards-Grafana](https://github.com/imatefx/typesense-prometheus-exporter/assets/3025904/afc7948a-de7a-4b8f-a1e6-a8394c61859f)
 
 ## Introduction
 
