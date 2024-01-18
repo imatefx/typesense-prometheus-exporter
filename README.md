@@ -43,7 +43,7 @@ docker run --name="example-ts-prom-exp" \
            imatefx/typesense-prometheus-exporter
 ```
 
-This command sets up the Typesense-Prometheus-Exporter with the necessary environment variables and starts the exporter service.
+This command sets up the Typesense-Prometheus-Exporter with the necessary environment variables and starts the exporter service on exposed port `8888`.
 
 
 ## Usage
