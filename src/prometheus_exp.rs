@@ -327,7 +327,7 @@ pub(crate) async fn generate_metrics(
             ])
             .set(value.to_string().parse::<f64>().unwrap_or(0.0));
 
-        match parse_string(key) {
+        match parse_collection_action_line(key) {
             Some((method, collection_name, action)) => {
                 println!("Method: {}", method);
                 println!("Collection Name: {}", collection_name);
@@ -375,11 +375,11 @@ pub(crate) async fn generate_metrics(
             ])
             .set(value.to_string().parse::<f64>().unwrap_or(0.0));
 
-        match parse_string(key) {
+        match parse_collection_action_line(key) {
             Some((method, collection_name, action)) => {
-                println!("Method: {}", method);
-                println!("Collection Name: {}", collection_name);
-                println!("Action: {}", action);
+                // println!("Method: {}", method);
+                // println!("Collection Name: {}", collection_name);
+                // println!("Action: {}", action);
 
                 typesense_stats_requests_per_second_by_collection
                     .with_label_values(&[
@@ -393,7 +393,7 @@ pub(crate) async fn generate_metrics(
                     .set(value.to_string().parse::<f64>().unwrap_or(0.0));
             }
             None => {
-                println!("No match found");
+                // println!("No match found");
             }
         }
     }
@@ -408,7 +408,7 @@ pub(crate) async fn generate_metrics(
     return metric_line;
 }
 
-fn parse_string(input: &str) -> Option<(String, String, String)> {
+fn parse_collection_action_line(input: &str) -> Option<(String, String, String)> {
     let pattern = r"(\w+)\s+/collections/([^/]+)/([^/]+/[^/]+)";
     let re = Regex::new(pattern).unwrap();
 
