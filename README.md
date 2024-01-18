@@ -73,3 +73,7 @@ typesense-prometheus-exporter [OPTIONS] --typesense-host <TYPESENSE_HOST> --type
 
 - `-h, --help`: Display help.
 - `-V, --version`: Display version.
+
+## Todo
+- Add logging
+- Code cleanup
