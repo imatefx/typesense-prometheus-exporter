@@ -9,8 +9,8 @@ pub async fn get_typesense_stats(args: Arc<CliArgs>) -> Result<TypesenseStats, E
     let client = reqwest::Client::new();
 
     let url = format!(
-        "http://{}:{}/stats.json",
-        args.typesense_host, args.typesense_port
+        "{}://{}:{}/stats.json",
+        args.typesense_protocol, args.typesense_host, args.typesense_port
     );
 
     let res = client
