@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::{cli::CliArgs, typesense::models::typesense_health_model::TypesenseHealth};
 use axum::Error;
@@ -6,18 +7,28 @@ use axum::Error;
 pub async fn get_typesense_health(args: Arc<CliArgs>) -> Result<TypesenseHealth, Error> {
     let mut health_data: TypesenseHealth = TypesenseHealth::default();
 
-    let client = reqwest::Client::new();
+    let mut client_builder = reqwest::Client::builder();
+    if args.typesense_timeout >= 0 {
+        client_builder = client_builder.timeout(Duration::from_secs(args.typesense_timeout as u64));
+    }
+    let client = client_builder.build().unwrap();
 
     let url = format!(
         "{}://{}:{}/health",
         args.typesense_protocol, args.typesense_host, args.typesense_port
     );
 
-    let res = client
+    let res = match client
         .get(url)
         .send()
         .await
-        .unwrap();
+    {
+        Ok(res) => res,
+        Err(e) => {
+            println!("Health endpoint: request failed (timeout/connection error): {:?}", e);
+            return Ok(health_data);
+        }
+    };
 
     match res.status() {
         reqwest::StatusCode::OK => {
@@ -32,7 +43,7 @@ pub async fn get_typesense_health(args: Arc<CliArgs>) -> Result<TypesenseHealth,
             };
         }
         _ => {
-            panic!("Uh oh! Something unexpected happened.");
+            println!("Uh oh! Something unexpected happened.");
         }
     };
 
