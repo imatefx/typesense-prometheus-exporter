@@ -1,5 +1,4 @@
 use clap::Parser;
-use tokio;
 pub mod cli;
 pub mod prometheus_exp;
 pub mod server;
