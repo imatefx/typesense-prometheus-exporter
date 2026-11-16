@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::{collections::BTreeMap, sync::OnceLock};
 
 use prometheus::{GaugeVec, Opts, Registry, TextEncoder};
 use regex::Regex;
@@ -10,7 +10,7 @@ use crate::typesense::models::{
 };
 
 const BASE_LABELS: &[&str] = &["host", "port", "key"];
-const COLLECTION_LABELS: &[&str] = &["host", "port", "key", "method", "collection_name", "action"];
+const COLLECTION_LABELS: &[&str] = &["host", "port", "method", "collection_name", "action"];
 const TARGET_LABELS: &[&str] = &["host", "port"];
 
 /// Results of one scrape of a Typesense node. Endpoints that failed are `None`
@@ -26,6 +26,10 @@ pub struct Scrape {
     pub version: Option<String>,
     pub status: Option<TypesenseStatus>,
     pub collections: Option<Vec<TypesenseCollection>>,
+    /// Whether each Typesense endpoint was fetched and parsed successfully.
+    pub endpoints: Vec<(&'static str, bool)>,
+    /// Wall time of the whole scrape of Typesense, in seconds.
+    pub scrape_duration: Option<f64>,
 }
 
 /// Render a scrape in the Prometheus text exposition format.
@@ -40,10 +44,12 @@ pub fn generate_metrics(scrape: &Scrape, host: &str, port: u16) -> String {
             "Data received through the metrics api of typesense",
             BASE_LABELS,
         );
+        // Values Typesense reports but that aren't numbers are left out, not
+        // exported as 0.
         for (key, raw) in metrics.entries() {
-            ts_metrics
-                .with_label_values(&[host, &port, key])
-                .set(raw.parse().unwrap_or(0.0));
+            if let Ok(value) = raw.parse::<f64>() {
+                ts_metrics.with_label_values(&[host, &port, key]).set(value);
+            }
         }
     }
 
@@ -120,6 +126,30 @@ pub fn generate_metrics(scrape: &Scrape, host: &str, port: u16) -> String {
         }
     }
 
+    if !scrape.endpoints.is_empty() {
+        let success = gauge(
+            &registry,
+            "typesense_scrape_success",
+            "1 if the Typesense endpoint was fetched and parsed on this scrape, otherwise 0",
+            &["host", "port", "endpoint"],
+        );
+        for (endpoint, ok) in &scrape.endpoints {
+            success
+                .with_label_values(&[host, &port, endpoint])
+                .set(if *ok { 1.0 } else { 0.0 });
+        }
+    }
+    if let Some(seconds) = scrape.scrape_duration {
+        gauge(
+            &registry,
+            "typesense_scrape_duration_seconds",
+            "Time taken to query all Typesense endpoints for this scrape",
+            TARGET_LABELS,
+        )
+        .with_label_values(&[host, &port])
+        .set(seconds);
+    }
+
     TextEncoder::new()
         .encode_to_string(&registry.gather())
         .expect("prometheus text encoding failed")
@@ -136,46 +166,145 @@ fn export_stats(registry: &Registry, stats: &TypesenseStats, host: &str, port: &
         ts_stats.with_label_values(&[host, port, key]).set(value);
     }
 
-    let per_endpoint = [
-        (
-            "typesense_stats_latency_ms",
-            "Each endpoint latency in ms from stats api",
-            &stats.latency_ms,
-        ),
-        (
-            "typesense_stats_requests_per_second",
-            "Each endpoint rps from stats api",
-            &stats.requests_per_second,
-        ),
-    ];
-    for (name, help, values) in per_endpoint {
-        let by_endpoint = gauge(registry, name, help, BASE_LABELS);
-        let by_collection = gauge(
-            registry,
-            &format!("{name}_by_collection"),
-            help,
-            COLLECTION_LABELS,
-        );
-        export_per_endpoint(values, host, port, &by_endpoint, &by_collection);
+    // Typesense reports one entry per request path, including document and
+    // other resource IDs. Normalise those to `:id` so the number of series
+    // stays bounded, merging entries that collapse to the same endpoint.
+    let endpoints = merge_endpoints(&stats.latency_ms, &stats.requests_per_second);
+
+    let latency = gauge(
+        registry,
+        "typesense_stats_latency_ms",
+        "Each endpoint latency in ms from stats api",
+        BASE_LABELS,
+    );
+    let rps = gauge(
+        registry,
+        "typesense_stats_requests_per_second",
+        "Each endpoint rps from stats api",
+        BASE_LABELS,
+    );
+    let latency_by_collection = gauge(
+        registry,
+        "typesense_stats_latency_ms_by_collection",
+        "Each endpoint latency in ms from stats api",
+        COLLECTION_LABELS,
+    );
+    let rps_by_collection = gauge(
+        registry,
+        "typesense_stats_requests_per_second_by_collection",
+        "Each endpoint rps from stats api",
+        COLLECTION_LABELS,
+    );
+
+    for (endpoint, e) in &endpoints {
+        let parts = parse_collection_action(endpoint);
+        for (value, by_endpoint, by_collection) in [
+            (e.latency_ms(), &latency, &latency_by_collection),
+            (e.rps, &rps, &rps_by_collection),
+        ] {
+            let Some(value) = value else { continue };
+            by_endpoint
+                .with_label_values(&[host, port, endpoint])
+                .set(value);
+            if let Some((method, collection, action)) = parts {
+                by_collection
+                    .with_label_values(&[host, port, method, collection, action])
+                    .set(value);
+            }
+        }
     }
 }
 
-fn export_per_endpoint(
-    values: &Map<String, Value>,
-    host: &str,
-    port: &str,
-    by_endpoint: &GaugeVec,
-    by_collection: &GaugeVec,
-) {
-    for (key, value) in values {
-        let value = value.as_f64().unwrap_or(0.0);
-        by_endpoint.with_label_values(&[host, port, key]).set(value);
+/// Latency and request rate of one normalised endpoint, possibly merged from
+/// several raw Typesense entries.
+#[derive(Debug, Default, PartialEq)]
+struct Endpoint {
+    rps: Option<f64>,
+    latencies: Vec<(f64, f64)>, // (latency_ms, rps of that raw entry)
+}
 
-        if let Some((method, collection, action)) = parse_collection_action(key) {
-            by_collection
-                .with_label_values(&[host, port, key, method, collection, action])
-                .set(value);
+impl Endpoint {
+    /// Request-weighted average latency; a plain average when no entry has
+    /// traffic.
+    fn latency_ms(&self) -> Option<f64> {
+        if self.latencies.is_empty() {
+            return None;
         }
+        let weight: f64 = self.latencies.iter().map(|(_, w)| w).sum();
+        Some(if weight > 0.0 {
+            self.latencies.iter().map(|(l, w)| l * w).sum::<f64>() / weight
+        } else {
+            self.latencies.iter().map(|(l, _)| l).sum::<f64>() / self.latencies.len() as f64
+        })
+    }
+}
+
+fn merge_endpoints(
+    latency_ms: &Map<String, Value>,
+    requests_per_second: &Map<String, Value>,
+) -> BTreeMap<String, Endpoint> {
+    let mut merged: BTreeMap<String, Endpoint> = BTreeMap::new();
+    for (raw, value) in requests_per_second {
+        if let Some(rps) = value.as_f64() {
+            let e = merged.entry(normalize_endpoint(raw)).or_default();
+            e.rps = Some(e.rps.unwrap_or(0.0) + rps);
+        }
+    }
+    for (raw, value) in latency_ms {
+        if let Some(latency) = value.as_f64() {
+            let weight = requests_per_second
+                .get(raw)
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            merged
+                .entry(normalize_endpoint(raw))
+                .or_default()
+                .latencies
+                .push((latency, weight));
+        }
+    }
+    merged
+}
+
+/// Path segments followed by a caller-chosen ID or name in Typesense's API.
+const ID_PARENTS: &[&str] = &[
+    "documents",
+    "synonyms",
+    "overrides",
+    "keys",
+    "aliases",
+    "presets",
+    "stopwords",
+    "rules",
+    "models",
+    "nl_search_models",
+    "dictionaries",
+    "synonym_sets",
+    "curation_sets",
+    "items",
+];
+/// Fixed actions that look like IDs but aren't.
+const DOCUMENT_ACTIONS: &[&str] = &["search", "import", "export"];
+
+/// Replace resource IDs in a Typesense stats key with `:id`, e.g.
+/// `GET /collections/books/documents/42` → `GET /collections/books/documents/:id`.
+/// Collection names are kept.
+fn normalize_endpoint(key: &str) -> String {
+    let (method, path) = key.split_once(' ').unwrap_or(("", key));
+    let path = path.split('?').next().unwrap_or(path);
+    let mut segments: Vec<&str> = path.split('/').collect();
+    for i in 1..segments.len() {
+        let parent = segments[i - 1];
+        let is_action = parent == "documents" && DOCUMENT_ACTIONS.contains(&segments[i]);
+        if ID_PARENTS.contains(&parent) && !segments[i].is_empty() && !is_action {
+            segments[i] = ":id";
+        }
+    }
+    let path = segments.join("/");
+    if method.is_empty() {
+        path
+    } else {
+        format!("{method} {path}")
     }
 }
 
@@ -188,12 +317,12 @@ fn gauge(registry: &Registry, name: &str, help: &str, labels: &[&str]) -> GaugeV
 }
 
 /// Split `"GET /collections/books/documents/search"` into
-/// `("GET", "books", "documents/search")`.
+/// `("GET", "books", "documents/search")`. Anything below the collection
+/// counts as the action, e.g. `documents/:id` or `documents`.
 fn parse_collection_action(input: &str) -> Option<(&str, &str, &str)> {
     static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r"(\w+)\s+/collections/([^/]+)/([^/]+/[^/]+)").expect("valid regex")
-    });
+    let re =
+        RE.get_or_init(|| Regex::new(r"^(\w+)\s+/collections/([^/]+)/(.+)$").expect("valid regex"));
 
     let caps = re.captures(input)?;
     Some((
@@ -305,11 +434,14 @@ mod tests {
     }
 
     #[test]
-    fn unparseable_values_are_exported_as_zero() {
-        let metrics: TypesenseMetrics =
-            serde_json::from_str(r#"{"system_disk_used_bytes": "n/a"}"#).unwrap();
+    fn unparseable_values_are_omitted() {
+        let metrics: TypesenseMetrics = serde_json::from_str(
+            r#"{"system_disk_used_bytes": "n/a", "system_disk_total_bytes": "100"}"#,
+        )
+        .unwrap();
         let stats: TypesenseStats = serde_json::from_str(
-            r#"{"latency_ms": {"POST /collections/a/documents/import": "slow"}}"#,
+            r#"{"latency_ms": {"POST /collections/a/documents/import": "slow",
+                               "GET /collections/a/documents/search": 3}}"#,
         )
         .unwrap();
         let scrape = Scrape {
@@ -320,9 +452,15 @@ mod tests {
         let out = generate_metrics(&scrape, "h", 1);
 
         assert!(
-            out.contains(r#"typesense_metrics{host="h",key="system_disk_used_bytes",port="1"} 0"#)
+            !out.contains("system_disk_used_bytes"),
+            "\"n/a\" is not a 0"
         );
-        assert!(out.contains(r#"action="documents/import",collection_name="a""#));
+        assert!(out.contains(r#"key="system_disk_total_bytes",port="1"} 100"#));
+        assert!(
+            !out.contains("documents/import"),
+            "non-numeric latency is left out"
+        );
+        assert!(out.contains(r#"action="documents/search""#));
     }
 
     #[test]
@@ -331,8 +469,12 @@ mod tests {
             assert_eq!(parse_collection_action(path), None, "{path}");
         }
         assert_eq!(
-            parse_collection_action("DELETE /collections/books/documents/42"),
-            Some(("DELETE", "books", "documents/42"))
+            parse_collection_action("DELETE /collections/books/documents/:id"),
+            Some(("DELETE", "books", "documents/:id"))
+        );
+        assert_eq!(
+            parse_collection_action("POST /collections/books/documents"),
+            Some(("POST", "books", "documents"))
         );
     }
 
@@ -425,5 +567,90 @@ mod tests {
         ] {
             assert!(out.contains(line), "missing {line}");
         }
+    }
+
+    #[test]
+    fn normalizes_resource_ids_but_keeps_collections_and_actions() {
+        for (raw, normalized) in [
+            (
+                "GET /collections/books/documents/42",
+                "GET /collections/books/documents/:id",
+            ),
+            (
+                "DELETE /collections/books/documents/sku-9?x=1",
+                "DELETE /collections/books/documents/:id",
+            ),
+            (
+                "GET /collections/books/documents/search",
+                "GET /collections/books/documents/search",
+            ),
+            (
+                "POST /collections/books/documents/import",
+                "POST /collections/books/documents/import",
+            ),
+            (
+                "GET /collections/books/documents/export",
+                "GET /collections/books/documents/export",
+            ),
+            (
+                "POST /collections/books/documents",
+                "POST /collections/books/documents",
+            ),
+            (
+                "PUT /collections/books/synonyms/colours",
+                "PUT /collections/books/synonyms/:id",
+            ),
+            ("DELETE /keys/17", "DELETE /keys/:id"),
+            ("PUT /aliases/live", "PUT /aliases/:id"),
+            (
+                "GET /synonym_sets/s1/items/i2",
+                "GET /synonym_sets/:id/items/:id",
+            ),
+            ("GET /health", "GET /health"),
+            ("POST /multi_search", "POST /multi_search"),
+        ] {
+            assert_eq!(normalize_endpoint(raw), normalized, "{raw}");
+        }
+    }
+
+    #[test]
+    fn merged_endpoints_sum_rates_and_weight_latency() {
+        let latency = serde_json::from_str(
+            r#"{"GET /collections/a/documents/1": 10, "GET /collections/a/documents/2": 40,
+                "GET /collections/a/documents/3": 7, "GET /health": 1}"#,
+        )
+        .unwrap();
+        let rps = serde_json::from_str(
+            r#"{"GET /collections/a/documents/1": 3, "GET /collections/a/documents/2": 1,
+                "GET /health": 0}"#,
+        )
+        .unwrap();
+        let merged = merge_endpoints(&latency, &rps);
+
+        let doc = &merged["GET /collections/a/documents/:id"];
+        assert_eq!(doc.rps, Some(4.0));
+        // (10*3 + 40*1 + 7*0) / (3 + 1 + 0)
+        assert_eq!(doc.latency_ms(), Some(17.5));
+        assert_eq!(
+            merged["GET /health"].latency_ms(),
+            Some(1.0),
+            "no traffic: plain average"
+        );
+        assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn exports_scrape_health() {
+        let scrape = Scrape {
+            endpoints: vec![("/metrics.json", true), ("/status", false)],
+            scrape_duration: Some(0.25),
+            ..Scrape::default()
+        };
+        let out = generate_metrics(&scrape, "h", 1);
+
+        assert!(out
+            .contains(r#"typesense_scrape_success{endpoint="/metrics.json",host="h",port="1"} 1"#));
+        assert!(out.contains(r#"typesense_scrape_success{endpoint="/status",host="h",port="1"} 0"#));
+        assert!(out.contains(r#"typesense_scrape_duration_seconds{host="h",port="1"} 0.25"#));
     }
 }

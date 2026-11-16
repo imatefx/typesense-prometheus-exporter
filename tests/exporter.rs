@@ -15,11 +15,12 @@ const METRICS: &str = include_str!("fixtures/metrics.json");
 const STATS: &str = include_str!("fixtures/stats.json");
 const COLLECTIONS: &str = include_str!("fixtures/collections.json");
 
-fn args_for(host: &str, port: u16, timeout: i64) -> CliArgs {
+fn args_for(host: &str, port: u16, timeout: u64) -> CliArgs {
     CliArgs {
         typesense_host: host.to_string(),
         typesense_protocol: "http".to_string(),
-        typesense_api_key: API_KEY.to_string(),
+        typesense_api_key: Some(API_KEY.to_string()),
+        typesense_api_key_file: None,
         typesense_port: port,
         exporter_bind_address: "127.0.0.1".to_string(),
         exporter_bind_port: 0,
@@ -36,7 +37,7 @@ async fn spawn_exporter(args: CliArgs) -> String {
     format!("http://{addr}")
 }
 
-async fn exporter_for(mock: &MockServer, timeout: i64) -> String {
+async fn exporter_for(mock: &MockServer, timeout: u64) -> String {
     let addr = mock.address();
     spawn_exporter(args_for(&addr.ip().to_string(), addr.port(), timeout)).await
 }
@@ -106,7 +107,7 @@ fn raft(out: &str) -> Option<f64> {
 #[tokio::test]
 async fn healthy_leader_exports_everything() {
     let mock = healthy_node(1).await;
-    let base = exporter_for(&mock, -1).await;
+    let base = exporter_for(&mock, 0).await;
 
     let (status, out) = scrape(&base).await;
 
@@ -127,7 +128,7 @@ async fn healthy_leader_exports_everything() {
 #[tokio::test]
 async fn follower_reports_raft_state_four() {
     let mock = healthy_node(4).await;
-    let base = exporter_for(&mock, -1).await;
+    let base = exporter_for(&mock, 0).await;
 
     let (_, out) = scrape(&base).await;
 
@@ -139,7 +140,7 @@ async fn sends_api_key_to_typesense() {
     // Every mock route requires the API key; a missing header would 404 and
     // leave typesense_metrics out of the response.
     let mock = healthy_node(1).await;
-    let base = exporter_for(&mock, -1).await;
+    let base = exporter_for(&mock, 0).await;
 
     let (_, out) = scrape(&base).await;
 
@@ -149,6 +150,13 @@ async fn sends_api_key_to_typesense() {
     assert!(requests
         .iter()
         .all(|r| r.headers.get("x-typesense-api-key").unwrap() == API_KEY));
+    assert!(
+        requests
+            .iter()
+            .any(|r| r.url.path() == "/collections"
+                && r.url.query() == Some("exclude_fields=fields")),
+        "collection schemas are not downloaded"
+    );
 }
 
 #[tokio::test]
@@ -158,7 +166,7 @@ async fn unreachable_typesense_reports_unhealthy_and_omits_metrics() {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         l.local_addr().unwrap().port()
     };
-    let base = spawn_exporter(args_for("127.0.0.1", port, -1)).await;
+    let base = spawn_exporter(args_for("127.0.0.1", port, 0)).await;
 
     let (status, out) = scrape(&base).await;
 
@@ -181,7 +189,7 @@ async fn unauthorized_endpoints_are_omitted() {
         ResponseTemplate::new(200).set_body_json(json!({"ok": true})),
     )
     .await;
-    let base = exporter_for(&mock, -1).await;
+    let base = exporter_for(&mock, 0).await;
 
     let (status, out) = scrape(&base).await;
 
@@ -202,7 +210,7 @@ async fn unhealthy_node_reports_zero_health() {
             .set_body_json(json!({"ok": false, "resource_error": "OUT_OF_DISK"})),
     )
     .await;
-    let base = exporter_for(&mock, -1).await;
+    let base = exporter_for(&mock, 0).await;
 
     let (_, out) = scrape(&base).await;
 
@@ -218,7 +226,7 @@ async fn health_ok_false_with_200_is_unhealthy() {
         ResponseTemplate::new(200).set_body_json(json!({"ok": false})),
     )
     .await;
-    let base = exporter_for(&mock, -1).await;
+    let base = exporter_for(&mock, 0).await;
 
     let (_, out) = scrape(&base).await;
 
@@ -243,7 +251,7 @@ async fn malformed_response_only_drops_that_endpoint() {
         ResponseTemplate::new(200).set_body_json(json!({"state": 1})),
     )
     .await;
-    let base = exporter_for(&mock, -1).await;
+    let base = exporter_for(&mock, 0).await;
 
     let (_, out) = scrape(&base).await;
 
@@ -277,7 +285,7 @@ async fn timeout_bounds_a_hung_typesense() {
 #[tokio::test]
 async fn root_points_to_metrics() {
     let mock = healthy_node(1).await;
-    let base = exporter_for(&mock, -1).await;
+    let base = exporter_for(&mock, 0).await;
 
     let body = reqwest::get(&base).await.unwrap().text().await.unwrap();
 
@@ -285,34 +293,24 @@ async fn root_points_to_metrics() {
 }
 
 #[tokio::test]
-async fn run_serves_on_the_configured_address() {
+async fn serve_runs_the_exporter_on_a_given_listener() {
     let mock = healthy_node(1).await;
-    let port = {
-        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        l.local_addr().unwrap().port()
-    };
-    let mut args = args_for(&mock.address().ip().to_string(), mock.address().port(), 2);
-    args.exporter_bind_port = port;
-    let task = tokio::spawn(server::run(args));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let args = args_for(&mock.address().ip().to_string(), mock.address().port(), 2);
+    let task = tokio::spawn(server::serve(listener, args));
 
-    let base = format!("http://127.0.0.1:{port}");
-    let mut out = None;
-    for _ in 0..50 {
-        if let Ok(res) = reqwest::get(format!("{base}/metrics")).await {
-            out = Some(res.text().await.unwrap());
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    let (status, out) = scrape(&base).await;
     task.abort();
 
-    assert_eq!(health(&out.expect("exporter never came up")), Some(1.0));
+    assert_eq!(status, 200);
+    assert_eq!(health(&out), Some(1.0));
 }
 
 #[tokio::test]
 async fn run_fails_when_the_port_is_taken() {
     let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let mut args = args_for("127.0.0.1", 1, -1);
+    let mut args = args_for("127.0.0.1", 1, 0);
     args.exporter_bind_port = taken.local_addr().unwrap().port();
 
     let err = server::run(args).await.unwrap_err();
@@ -334,7 +332,7 @@ async fn zero_timeout_means_no_timeout() {
 #[tokio::test]
 async fn exports_version_replication_documents_and_percentiles() {
     let mock = healthy_node(1).await;
-    let base = exporter_for(&mock, -1).await;
+    let base = exporter_for(&mock, 0).await;
 
     let (_, out) = scrape(&base).await;
 
@@ -382,7 +380,7 @@ async fn older_typesense_without_status_still_exports_the_rest() {
     )
     .await;
     mount(&mock, "/collections", json_body(COLLECTIONS)).await;
-    let base = exporter_for(&mock, -1).await;
+    let base = exporter_for(&mock, 0).await;
 
     let (status, out) = scrape(&base).await;
 
@@ -395,4 +393,153 @@ async fn older_typesense_without_status_still_exports_the_rest() {
     assert!(out.contains("typesense_collection_documents{"));
     assert!(out.contains("typesense_metrics{"));
     assert_eq!(health(&out), Some(1.0));
+}
+
+fn scrape_success(out: &str, endpoint: &str) -> Option<f64> {
+    out.lines()
+        .find(|l| {
+            l.starts_with("typesense_scrape_success{")
+                && l.contains(&format!(r#"endpoint="{endpoint}""#))
+        })
+        .and_then(|l| l.rsplit(' ').next())
+        .and_then(|v| v.parse().ok())
+}
+
+#[tokio::test]
+async fn scrape_health_reports_each_endpoint_and_the_duration() {
+    let mock = healthy_node(1).await;
+    let base = exporter_for(&mock, 0).await;
+
+    let (_, out) = scrape(&base).await;
+
+    for endpoint in [
+        "/metrics.json",
+        "/stats.json",
+        "/health",
+        "/debug",
+        "/status",
+        "/collections",
+    ] {
+        assert_eq!(scrape_success(&out, endpoint), Some(1.0), "{endpoint}");
+    }
+    let duration = gauge(&out, "typesense_scrape_duration_seconds{");
+    assert!(
+        duration.is_some_and(|d| (0.0..5.0).contains(&d)),
+        "{duration:?}"
+    );
+}
+
+#[tokio::test]
+async fn scrape_health_flags_the_failing_endpoints() {
+    let mock = MockServer::start().await;
+    mount(&mock, "/metrics.json", ResponseTemplate::new(401)).await;
+    mount(&mock, "/stats.json", json_body("{broken")).await;
+    mount(
+        &mock,
+        "/health",
+        ResponseTemplate::new(200).set_body_json(json!({"ok": true})),
+    )
+    .await;
+    let base = exporter_for(&mock, 0).await;
+
+    let (_, out) = scrape(&base).await;
+
+    assert_eq!(scrape_success(&out, "/metrics.json"), Some(0.0), "401");
+    assert_eq!(
+        scrape_success(&out, "/stats.json"),
+        Some(0.0),
+        "malformed JSON"
+    );
+    assert_eq!(scrape_success(&out, "/status"), Some(0.0), "not served");
+    assert_eq!(scrape_success(&out, "/health"), Some(1.0));
+}
+
+#[tokio::test]
+async fn document_ids_do_not_create_new_series() {
+    // Typesense names stats entries after the request path, document IDs
+    // included. Every ID must fold into one bounded `documents/:id` series.
+    let mock = healthy_node(1).await;
+    mock.reset().await;
+    let mut latency = serde_json::Map::new();
+    let mut rps = serde_json::Map::new();
+    for id in 0..50 {
+        latency.insert(
+            format!("GET /collections/products/documents/{id}"),
+            json!(2.0),
+        );
+        rps.insert(
+            format!("GET /collections/products/documents/{id}"),
+            json!(1.0),
+        );
+    }
+    latency.insert(
+        "GET /collections/products/documents/search".into(),
+        json!(4.0),
+    );
+    rps.insert(
+        "GET /collections/products/documents/search".into(),
+        json!(10.0),
+    );
+    mount(
+        &mock,
+        "/stats.json",
+        ResponseTemplate::new(200)
+            .set_body_json(json!({"latency_ms": latency, "requests_per_second": rps})),
+    )
+    .await;
+    let base = exporter_for(&mock, 0).await;
+
+    let (_, out) = scrape(&base).await;
+
+    let rps_lines: Vec<&str> = out
+        .lines()
+        .filter(|l| l.starts_with("typesense_stats_requests_per_second{"))
+        .collect();
+    assert_eq!(rps_lines.len(), 2, "{rps_lines:#?}");
+    assert!(out.contains(r#"key="GET /collections/products/documents/:id",port="#));
+    assert!(
+        rps_lines
+            .iter()
+            .any(|l| l.contains("documents/:id") && l.ends_with(" 50")),
+        "rates are summed"
+    );
+    let by_collection: Vec<&str> = out
+        .lines()
+        .filter(|l| l.starts_with("typesense_stats_requests_per_second_by_collection{"))
+        .collect();
+    assert_eq!(by_collection.len(), 2, "{by_collection:#?}");
+    assert!(
+        by_collection.iter().all(|l| !l.contains("key=")),
+        "no duplicated key label"
+    );
+    assert!(by_collection
+        .iter()
+        .any(|l| l.contains(r#"action="documents/:id""#)));
+}
+
+#[tokio::test]
+async fn reads_the_api_key_from_a_file() {
+    let mock = healthy_node(1).await;
+    let path = std::env::temp_dir().join(format!("exporter-key-{}", std::process::id()));
+    std::fs::write(&path, format!("{API_KEY}\n")).unwrap();
+    let mut args = args_for(&mock.address().ip().to_string(), mock.address().port(), 0);
+    args.typesense_api_key = None;
+    args.typesense_api_key_file = Some(path.clone());
+    let base = spawn_exporter(args).await;
+
+    let (_, out) = scrape(&base).await;
+    std::fs::remove_file(&path).unwrap();
+
+    // The mocks only answer requests carrying the key.
+    assert!(out.contains("typesense_metrics{"));
+    assert_eq!(scrape_success(&out, "/stats.json"), Some(1.0));
+}
+
+#[tokio::test]
+async fn startup_fails_without_a_readable_key_file() {
+    let mut args = args_for("127.0.0.1", 1, 0);
+    args.typesense_api_key = None;
+    args.typesense_api_key_file = Some("/nonexistent/typesense-key".into());
+
+    assert!(server::router(&args).is_err());
 }

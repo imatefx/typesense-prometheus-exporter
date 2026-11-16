@@ -1,7 +1,9 @@
+use std::{fmt, path::PathBuf};
+
 use clap::Parser;
 
 /// Expose Typesense metrics and stats in Prometheus format
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct CliArgs {
     /// Typesense Host url
@@ -12,9 +14,21 @@ pub struct CliArgs {
     #[arg(long, env, default_value_t= String::from("http"))]
     pub typesense_protocol: String,
 
-    /// Typesense API key
+    /// Typesense API key. Prefer --typesense-api-key-file (or the environment
+    /// variable) over the flag, which other users can see in the process list.
+    #[arg(
+        long,
+        env,
+        hide_env_values = true,
+        required_unless_present = "typesense_api_key_file",
+        conflicts_with = "typesense_api_key_file"
+    )]
+    pub typesense_api_key: Option<String>,
+
+    /// File containing the Typesense API key, e.g. a Docker or Kubernetes
+    /// secret. Surrounding whitespace is ignored.
     #[arg(long, env)]
-    pub typesense_api_key: String,
+    pub typesense_api_key_file: Option<PathBuf>,
 
     /// Typesense port number
     #[arg(long, env, default_value_t = 8108)]
@@ -28,62 +42,178 @@ pub struct CliArgs {
     #[arg(long, env, default_value_t = 8888)]
     pub exporter_bind_port: u16,
 
-    /// Timeout for Typesense API requests in seconds (0 or less disables it).
+    /// Timeout for each Typesense request, in seconds; 0 disables it.
     /// Keep it below the Prometheus scrape timeout so a hung Typesense shows
     /// up as unhealthy instead of a failed scrape.
     #[arg(long, env, default_value_t = 5)]
-    pub typesense_timeout: i64,
+    pub typesense_timeout: u64,
+}
+
+impl CliArgs {
+    /// The API key, from `--typesense-api-key` or read from
+    /// `--typesense-api-key-file`.
+    pub fn api_key(&self) -> std::io::Result<String> {
+        match (&self.typesense_api_key, &self.typesense_api_key_file) {
+            (Some(key), _) => Ok(key.clone()),
+            (None, Some(path)) => {
+                let key = std::fs::read_to_string(path)?.trim().to_string();
+                if key.is_empty() {
+                    return Err(std::io::Error::other(format!(
+                        "API key file {} is empty",
+                        path.display()
+                    )));
+                }
+                Ok(key)
+            }
+            (None, None) => Err(std::io::Error::other("no Typesense API key configured")),
+        }
+    }
+
+    /// Whether the API key would travel unencrypted to another machine.
+    pub fn sends_key_in_plaintext(&self) -> bool {
+        let local = matches!(
+            self.typesense_host.as_str(),
+            "localhost" | "127.0.0.1" | "::1" | "[::1]"
+        );
+        self.typesense_protocol.eq_ignore_ascii_case("http") && !local
+    }
+}
+
+/// Like the derived `Debug`, but never prints the API key.
+impl fmt::Debug for CliArgs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CliArgs")
+            .field("typesense_host", &self.typesense_host)
+            .field("typesense_protocol", &self.typesense_protocol)
+            .field(
+                "typesense_api_key",
+                &self.typesense_api_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field("typesense_api_key_file", &self.typesense_api_key_file)
+            .field("typesense_port", &self.typesense_port)
+            .field("exporter_bind_address", &self.exporter_bind_address)
+            .field("exporter_bind_port", &self.exporter_bind_port)
+            .field("typesense_timeout", &self.typesense_timeout)
+            .finish()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
+
+    fn parse(args: &[&str]) -> Result<CliArgs, clap::Error> {
+        CliArgs::try_parse_from(std::iter::once("exporter").chain(args.iter().copied()))
+    }
 
     #[test]
     fn applies_defaults() {
-        let args = CliArgs::try_parse_from([
-            "exporter",
-            "--typesense-host",
-            "ts",
-            "--typesense-api-key",
-            "key",
-        ])
-        .unwrap();
+        let args = parse(&["--typesense-host", "ts", "--typesense-api-key", "key"]).unwrap();
 
         assert_eq!(args.typesense_protocol, "http");
         assert_eq!(args.typesense_port, 8108);
         assert_eq!(args.exporter_bind_address, "0.0.0.0");
         assert_eq!(args.exporter_bind_port, 8888);
         assert_eq!(args.typesense_timeout, 5);
+        assert_eq!(args.api_key().unwrap(), "key");
     }
 
     #[test]
     fn accepts_overrides() {
-        let args = CliArgs::try_parse_from([
-            "exporter",
+        let args = parse(&[
             "--typesense-host=ts",
             "--typesense-api-key=key",
             "--typesense-protocol=https",
             "--typesense-port=443",
-            "--typesense-timeout=5",
+            "--typesense-timeout=0",
             "--exporter-bind-port=9000",
         ])
         .unwrap();
 
         assert_eq!(args.typesense_protocol, "https");
         assert_eq!(args.typesense_port, 443);
-        assert_eq!(args.typesense_timeout, 5);
+        assert_eq!(args.typesense_timeout, 0);
         assert_eq!(args.exporter_bind_port, 9000);
     }
 
     #[test]
-    fn rejects_invalid_port() {
-        assert!(CliArgs::try_parse_from([
-            "exporter",
+    fn rejects_invalid_port_and_negative_timeout() {
+        assert!(parse(&[
             "--typesense-host=ts",
-            "--typesense-api-key=key",
-            "--typesense-port=99999",
+            "--typesense-api-key=k",
+            "--typesense-port=99999"
         ])
         .is_err());
+        assert!(parse(&[
+            "--typesense-host=ts",
+            "--typesense-api-key=k",
+            "--typesense-timeout=-1"
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn requires_exactly_one_key_source() {
+        assert!(parse(&["--typesense-host=ts"]).is_err(), "no key");
+        assert!(
+            parse(&[
+                "--typesense-host=ts",
+                "--typesense-api-key=k",
+                "--typesense-api-key-file=/k"
+            ])
+            .is_err(),
+            "both key sources"
+        );
+    }
+
+    #[test]
+    fn reads_and_trims_the_key_file() {
+        let path = std::env::temp_dir().join(format!("ts-key-{}", std::process::id()));
+        std::fs::write(&path, "  secret-key\n").unwrap();
+        let args = parse(&[
+            "--typesense-host=ts",
+            &format!("--typesense-api-key-file={}", path.display()),
+        ])
+        .unwrap();
+
+        assert_eq!(args.api_key().unwrap(), "secret-key");
+
+        std::fs::write(&path, "\n").unwrap();
+        assert!(args.api_key().is_err(), "empty key file");
+        std::fs::remove_file(&path).unwrap();
+        assert!(args.api_key().is_err(), "missing key file");
+    }
+
+    #[test]
+    fn never_prints_the_key() {
+        let args = parse(&["--typesense-host=ts", "--typesense-api-key=supersecret"]).unwrap();
+        assert!(!format!("{args:?}").contains("supersecret"));
+
+        let api_key_arg = CliArgs::command()
+            .get_arguments()
+            .find(|a| a.get_id() == "typesense_api_key")
+            .unwrap()
+            .clone();
+        assert!(
+            api_key_arg.is_hide_env_values_set(),
+            "--help must not show the env value"
+        );
+    }
+
+    #[test]
+    fn flags_plaintext_keys_to_remote_hosts() {
+        let remote = parse(&["--typesense-host=search.internal", "--typesense-api-key=k"]).unwrap();
+        let local = parse(&["--typesense-host=localhost", "--typesense-api-key=k"]).unwrap();
+        let tls = parse(&[
+            "--typesense-host=search.internal",
+            "--typesense-api-key=k",
+            "--typesense-protocol=https",
+        ])
+        .unwrap();
+
+        assert!(remote.sends_key_in_plaintext());
+        assert!(!local.sends_key_in_plaintext());
+        assert!(!tls.sends_key_in_plaintext());
     }
 }

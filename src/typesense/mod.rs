@@ -20,10 +20,10 @@ pub struct TypesenseClient {
 }
 
 impl TypesenseClient {
-    pub fn new(args: &CliArgs) -> reqwest::Result<Self> {
+    pub fn new(args: &CliArgs, api_key: String) -> reqwest::Result<Self> {
         let mut builder = Client::builder();
-        if let Ok(secs @ 1..) = u64::try_from(args.typesense_timeout) {
-            builder = builder.timeout(Duration::from_secs(secs));
+        if args.typesense_timeout > 0 {
+            builder = builder.timeout(Duration::from_secs(args.typesense_timeout));
         }
         Ok(Self {
             http: builder.build()?,
@@ -31,7 +31,7 @@ impl TypesenseClient {
                 "{}://{}:{}",
                 args.typesense_protocol, args.typesense_host, args.typesense_port
             ),
-            api_key: args.typesense_api_key.clone(),
+            api_key,
         })
     }
 
@@ -55,8 +55,10 @@ impl TypesenseClient {
         self.get_json("/status").await
     }
 
+    /// Collection summaries without their schemas, which can be large and
+    /// aren't needed for document counts.
     pub async fn collections(&self) -> reqwest::Result<Vec<TypesenseCollection>> {
-        self.get_json("/collections").await
+        self.get_json("/collections?exclude_fields=fields").await
     }
 
     async fn get_json<T: DeserializeOwned>(&self, path: &str) -> reqwest::Result<T> {
