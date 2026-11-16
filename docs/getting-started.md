@@ -68,6 +68,31 @@ curl -s localhost:8888/metrics | grep -E '^typesense_(health|raft_state)'
 
 If `typesense_health` is 0, check the exporter's logs. Each failed Typesense call is logged with the reason, e.g. a 401 or a connection refused.
 
+**Keep the key out of the command line.** Put the key in a file readable only by the exporter, and pass its path instead. The exporter re-reads the file when it changes, so you can rotate the key without a restart ([rotating keys](configuration.md#rotating-keys)):
+
+```bash
+docker run -d --name typesense-exporter -p 8888:8888 \
+  -v /etc/typesense-exporter/api-key:/run/secrets/typesense/api-key:ro \
+  -e TYPESENSE_HOST=typesense-1.internal \
+  -e TYPESENSE_API_KEY_FILE=/run/secrets/typesense/api-key \
+  imatefx/typesense-prometheus-exporter:v1.2.0
+```
+
+**Or use a config file.** Every option can go in a TOML file, and flags and environment variables still override it. Keys are never written inline, only as a key file or an environment variable name. Start from [`deploy/exporter.example.toml`](../deploy/exporter.example.toml), which lists every option with its default:
+
+```toml
+# exporter.toml
+typesense_host = "typesense-1.internal"
+typesense_protocol = "https"
+typesense_api_key_file = "/run/secrets/typesense/api-key"
+```
+
+```bash
+typesense-prometheus-exporter --config exporter.toml   # or TYPESENSE_EXPORTER_CONFIG=exporter.toml
+```
+
+See [the config file](configuration.md#config-file) for the precedence rules, and [several clusters with different keys](configuration.md#several-clusters-with-different-keys) for one exporter watching more than one cluster.
+
 ### 2. Scrape it with Prometheus
 
 ```yaml

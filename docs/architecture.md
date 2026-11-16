@@ -56,8 +56,8 @@ A fresh registry on every scrape means a metric that disappears from Typesense a
 | `src/config.rs` | `--config`: the TOML file, its option names and the flag > environment > file > default merge |
 | `src/probe_config.rs` | `[clusters.<name>]`: validation, key loading and node-to-cluster lookup |
 | `src/target.rs` | `Target`: strict parsing of `/probe` targets (IPv6, default scheme and port, no paths or credentials); `AllowList`: the nodes `/probe` may contact |
-| `src/key.rs` | `KeySource`: an API key that is fixed (flag, environment) or follows a key file, re-reading it when its modified time or length changes (checked at most once a second, per file) |
-| `src/typesense/mod.rs` | `TypesenseClient`: a shared HTTP client, base URL, `KeySource`; one method per endpoint |
+| `src/key.rs` | `KeySource`: an API key that is fixed (flag, environment) or follows a key file. A key file is checked at most once a second, per file, and re-read when its signature changes: modified time and length, plus inode, device and change time on unix. No lock is held during the file system calls, and a failed read keeps the previous key and is retried |
+| `src/typesense/mod.rs` | `TypesenseClient`: the shared HTTP client, a base URL and the key for one scrape (taken from the `KeySource` once, so all six requests use the same key); one method per endpoint |
 | `src/typesense/models/` | serde models for the six endpoint responses. For the 1.0 names, `TypesenseMetrics::fixed_entries()` gives the fixed `/metrics.json` fields and `core_number()` picks the core out of a per-core CPU key; the 1.0 mapping reads the remaining fields (per-core values and unmapped ones) from `other` directly. `TypesenseMetrics::entries()` gives the `(key, value)` pairs for the 0.4 output. `TypesenseStats::entries()` gives every numeric `/stats.json` field and feeds both name sets |
 | `src/prometheus_exp.rs` | `Scrape`, plus rendering to Prometheus text: the 1.0 and 0.4 name mappings, unit conversion, per-collection parsing, label handling |
 | `src/lib.rs` | Exposes the modules so integration and e2e tests can build the real router |
