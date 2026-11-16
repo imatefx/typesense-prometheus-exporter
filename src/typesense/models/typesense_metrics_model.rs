@@ -95,7 +95,7 @@ impl TypesenseMetrics {
                 .strip_prefix("system_cpu")?
                 .strip_suffix("_active_percentage")?;
             let is_core_number = !core.is_empty() && core.bytes().all(|b| b.is_ascii_digit());
-            Some((key.as_str(), value.as_str()?)).filter(|_| is_core_number)
+            is_core_number.then_some((key.as_str(), value.as_str()?))
         });
 
         fixed.chain(per_core)
