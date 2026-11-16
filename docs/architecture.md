@@ -101,6 +101,8 @@ flowchart TB
 | Artifact | How |
 |---|---|
 | Docker image | Multi-stage [`Dockerfile`](../Dockerfile): Rust 1.88 on Alpine builds a static musl binary, and the final image is `FROM scratch` with CA certificates. |
-| Multi-arch image | `docker buildx build --platform linux/amd64,linux/arm64 --push .` |
+| Multi-arch image on Docker Hub | [`docker.yml`](../.github/workflows/docker.yml) runs on every version tag (`vX.Y.Z`): it builds linux/amd64 + linux/arm64, pushes `:vX.Y.Z` and `:latest`, and attests the build. Pull requests that touch the image get an amd64 test build. |
 | Static Linux binaries | [`build-cross.sh`](../build-cross.sh) runs buildx and writes `releases/*-linux-{amd64,arm64}-musl` |
-| Release binaries | [`rust.yml`](../.github/workflows/rust.yml) builds Linux, macOS and Windows targets on tags and attaches them to the GitHub release |
+| Release binaries | [`rust.yml`](../.github/workflows/rust.yml) builds Linux, macOS and Windows targets on tags and creates the GitHub release, with notes taken from `CHANGELOG.md` and a `SHA256SUMS` file |
+
+**Releasing** is a version bump in `Cargo.toml`, a dated `CHANGELOG.md` section, and a pushed `vX.Y.Z` tag. Both workflows run from the tag.

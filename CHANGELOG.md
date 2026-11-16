@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- Docker images are published automatically again. The Docker workflow now runs on version tags, instead of on GitHub releases (which the release workflow creates in a way that doesn't trigger other workflows). Its build attestation step also failed for lack of the `id-token: write` permission.
+
 ## [0.3.0] - 2026-11-16
 
 ### Added

@@ -42,7 +42,7 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           pct=$(cargo llvm-cov report --json --summary-only | jq '.data[0].totals.lines.percent | floor')
-          color=$( ((pct >= 90)) && echo brightgreen || { ((pct >= 75)) && echo yellow || echo red; } )
+          if ((pct >= 90)); then color=brightgreen; elif ((pct >= 75)); then color=yellow; else color=red; fi
           mkdir -p badge && cd badge
           printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' "$pct" "$color" > coverage.json
           git init -q -b badges

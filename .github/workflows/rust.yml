@@ -96,7 +96,7 @@ jobs:
       run: |
         mkdir -p release-assets
         find artifacts -type f -exec cp {} release-assets/ \;
-        cd release-assets && sha256sum * > SHA256SUMS && cat SHA256SUMS
+        cd release-assets && sha256sum -- * > SHA256SUMS && cat SHA256SUMS
 
     - name: Release notes from CHANGELOG.md
       run: |
