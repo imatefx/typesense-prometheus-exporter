@@ -7,31 +7,65 @@
 # To get a newer version, you will need to update the SHA.
 # You can also reference a tag or branch, but the action may change without warning.
 
+# Publishes imatefx/typesense-prometheus-exporter to Docker Hub.
+#
+# - Pushing a version tag (vX.Y.Z) builds linux/amd64 + linux/arm64 and pushes
+#   :vX.Y.Z and :latest, with a build provenance attestation.
+# - Run it manually ("Run workflow", choosing a tag) to republish a release.
+# - Pull requests build linux/amd64 only, without pushing, so a broken
+#   Dockerfile is caught before release.
+#
+# Triggered by the tag rather than by the GitHub release: the release is
+# created by rust.yml with GITHUB_TOKEN, and GitHub doesn't start other
+# workflows from events caused by GITHUB_TOKEN.
+
 name: Publish Docker image
 
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - Cargo.toml
+      - Cargo.lock
+      - src/**
+      - .github/workflows/docker.yml
+
 env:
-  REGISTRY: registry.hub.docker.com
+  REGISTRY: index.docker.io
   IMAGE_NAME: imatefx/typesense-prometheus-exporter
 
 jobs:
   push_to_registry:
-    name: Push Docker image to Docker Hub
+    name: Build and push Docker image
     runs-on: ubuntu-latest
     permissions:
-      packages: write
       contents: read
+      id-token: write      # build provenance attestation
       attestations: write
+    env:
+      # Publish only from a version tag (pushed, or chosen when run manually).
+      PUBLISH: ${{ github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v') }}
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
+
+      - name: Version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        if: env.PUBLISH == 'true'
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2
 
       - name: Log in to Docker Hub
+        if: env.PUBLISH == 'true'
         uses: docker/login-action@f4ef78c080cd8ba55a85445d5b36e214a81df20a
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
@@ -41,7 +75,12 @@ jobs:
         id: meta
         uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe97b2010124a938b7
         with:
-          images: imatefx/typesense-prometheus-exporter
+          images: ${{ env.IMAGE_NAME }}
+          flavor: latest=false
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest,enable=${{ env.PUBLISH == 'true' }}
+            type=ref,event=pr
 
       - name: Build and push Docker image
         id: push
@@ -49,16 +88,18 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
+          platforms: ${{ env.PUBLISH == 'true' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
+          push: ${{ env.PUBLISH == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-      
-      
+          build-args: |
+            version=${{ steps.version.outputs.version }}
+            release=${{ github.sha }}
+
       - name: Generate artifact attestation
+        if: env.PUBLISH == 'true'
         uses: actions/attest-build-provenance@v1
         with:
-          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME}}
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
-      
