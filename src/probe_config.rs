@@ -85,6 +85,12 @@ impl ProbeConfig {
             {
                 return Err(format!("{at}: name must match [A-Za-z0-9_-]+"));
             }
+            if name.eq_ignore_ascii_case("default") {
+                // `default` labels the default key in typesense_exporter_key_* metrics.
+                return Err(format!(
+                    "{at}: the name \"default\" is reserved for the default key"
+                ));
+            }
 
             let protocol = match c.protocol.as_deref() {
                 None => None,
@@ -307,6 +313,10 @@ mod tests {
         for bad in ["", "a b", "a.b", "pröd", "a/b"] {
             let e = err(&base(bad, "[\"a\"]", ""), &env);
             assert!(e.contains("[A-Za-z0-9_-]+"), "{bad:?}: {e}");
+        }
+        for reserved in ["default", "Default"] {
+            let e = err(&base(reserved, "[\"a\"]", ""), &env);
+            assert!(e.contains("reserved"), "{reserved}: {e}");
         }
         assert!(parse_with(&base("Prod_1-b", "[\"a\"]", ""), &env).is_ok());
 
