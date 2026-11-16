@@ -162,7 +162,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "builder",
-          "expr": "typesense_stats{host=~\"$host\",key=\"total_requests_per_second\"}",
+          "expr": "typesense_all_requests_per_second{host=~\"$host\"}",
           "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
@@ -255,7 +255,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "builder",
-          "expr": "typesense_stats{host=~\"$host\",key=\"write_requests_per_second\"}",
+          "expr": "typesense_requests_per_second{host=~\"$host\",operation=\"write\"}",
           "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
@@ -348,7 +348,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "builder",
-          "expr": "typesense_stats{host=~\"$host\",key=\"search_requests_per_second\"}",
+          "expr": "typesense_requests_per_second{host=~\"$host\",operation=\"search\"}",
           "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
@@ -441,7 +441,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "builder",
-          "expr": "typesense_stats{host=~\"$host\",key=\"import_requests_per_second\"}",
+          "expr": "typesense_requests_per_second{host=~\"$host\",operation=\"import\"}",
           "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
@@ -534,7 +534,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "builder",
-          "expr": "typesense_stats{host=~\"$host\",key=\"delete_requests_per_second\"}",
+          "expr": "typesense_requests_per_second{host=~\"$host\",operation=\"delete\"}",
           "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
@@ -627,7 +627,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "builder",
-          "expr": "typesense_stats{host=~\"$host\",key=\"overloaded_requests_per_second\"}",
+          "expr": "typesense_overloaded_requests_per_second{host=~\"$host\"}",
           "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
@@ -702,7 +702,7 @@
               }
             ]
           },
-          "unit": "ms"
+          "unit": "s"
         },
         "overrides": []
       },
@@ -732,7 +732,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_stats{host=~\"$host\",key=\"import_latency_ms\"}",
+          "expr": "typesense_request_latency_avg_seconds{host=~\"$host\",operation=\"import\"}",
           "legendFormat": "{{host}} · avg",
           "range": true,
           "refId": "avg"
@@ -743,7 +743,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_stats{host=~\"$host\",key=\"import_95Percentile_latency_ms\"}",
+          "expr": "typesense_request_latency_seconds{host=~\"$host\",operation=\"import\",quantile=\"0.95\"}",
           "legendFormat": "{{host}} · p95",
           "range": true,
           "refId": "p95"
@@ -754,7 +754,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_stats{host=~\"$host\",key=\"import_99Percentile_latency_ms\"}",
+          "expr": "typesense_request_latency_seconds{host=~\"$host\",operation=\"import\",quantile=\"0.99\"}",
           "legendFormat": "{{host}} · p99",
           "range": true,
           "refId": "p99"
@@ -765,7 +765,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_stats{host=~\"$host\",key=\"import_max_latency_ms\"}",
+          "expr": "typesense_request_latency_seconds{host=~\"$host\",operation=\"import\",quantile=\"1\"}",
           "legendFormat": "{{host}} · max",
           "range": true,
           "refId": "max"
@@ -828,7 +828,7 @@
               }
             ]
           },
-          "unit": "ms"
+          "unit": "s"
         },
         "overrides": []
       },
@@ -858,7 +858,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_stats{host=~\"$host\",key=\"search_latency_ms\"}",
+          "expr": "typesense_request_latency_avg_seconds{host=~\"$host\",operation=\"search\"}",
           "legendFormat": "{{host}} · avg",
           "range": true,
           "refId": "avg"
@@ -869,7 +869,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_stats{host=~\"$host\",key=\"search_95Percentile_latency_ms\"}",
+          "expr": "typesense_request_latency_seconds{host=~\"$host\",operation=\"search\",quantile=\"0.95\"}",
           "legendFormat": "{{host}} · p95",
           "range": true,
           "refId": "p95"
@@ -880,7 +880,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_stats{host=~\"$host\",key=\"search_99Percentile_latency_ms\"}",
+          "expr": "typesense_request_latency_seconds{host=~\"$host\",operation=\"search\",quantile=\"0.99\"}",
           "legendFormat": "{{host}} · p99",
           "range": true,
           "refId": "p99"
@@ -891,7 +891,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_stats{host=~\"$host\",key=\"search_max_latency_ms\"}",
+          "expr": "typesense_request_latency_seconds{host=~\"$host\",operation=\"search\",quantile=\"1\"}",
           "legendFormat": "{{host}} · max",
           "range": true,
           "refId": "max"
@@ -954,7 +954,7 @@
               }
             ]
           },
-          "unit": "ms"
+          "unit": "s"
         },
         "overrides": []
       },
@@ -984,7 +984,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_stats{host=~\"$host\",key=\"write_latency_ms\"}",
+          "expr": "typesense_request_latency_avg_seconds{host=~\"$host\",operation=\"write\"}",
           "legendFormat": "{{host}} · avg",
           "range": true,
           "refId": "avg"
@@ -995,7 +995,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_stats{host=~\"$host\",key=\"write_95Percentile_latency_ms\"}",
+          "expr": "typesense_request_latency_seconds{host=~\"$host\",operation=\"write\",quantile=\"0.95\"}",
           "legendFormat": "{{host}} · p95",
           "range": true,
           "refId": "p95"
@@ -1006,7 +1006,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_stats{host=~\"$host\",key=\"write_99Percentile_latency_ms\"}",
+          "expr": "typesense_request_latency_seconds{host=~\"$host\",operation=\"write\",quantile=\"0.99\"}",
           "legendFormat": "{{host}} · p99",
           "range": true,
           "refId": "p99"
@@ -1017,7 +1017,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_stats{host=~\"$host\",key=\"write_max_latency_ms\"}",
+          "expr": "typesense_request_latency_seconds{host=~\"$host\",operation=\"write\",quantile=\"1\"}",
           "legendFormat": "{{host}} · max",
           "range": true,
           "refId": "max"
@@ -1080,7 +1080,7 @@
               }
             ]
           },
-          "unit": "ms"
+          "unit": "s"
         },
         "overrides": []
       },
@@ -1110,7 +1110,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_stats{host=~\"$host\",key=\"delete_latency_ms\"}",
+          "expr": "typesense_request_latency_avg_seconds{host=~\"$host\",operation=\"delete\"}",
           "legendFormat": "{{host}} · avg",
           "range": true,
           "refId": "avg"
@@ -1121,7 +1121,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_stats{host=~\"$host\",key=\"delete_95Percentile_latency_ms\"}",
+          "expr": "typesense_request_latency_seconds{host=~\"$host\",operation=\"delete\",quantile=\"0.95\"}",
           "legendFormat": "{{host}} · p95",
           "range": true,
           "refId": "p95"
@@ -1132,7 +1132,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_stats{host=~\"$host\",key=\"delete_99Percentile_latency_ms\"}",
+          "expr": "typesense_request_latency_seconds{host=~\"$host\",operation=\"delete\",quantile=\"0.99\"}",
           "legendFormat": "{{host}} · p99",
           "range": true,
           "refId": "p99"
@@ -1143,7 +1143,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_stats{host=~\"$host\",key=\"delete_max_latency_ms\"}",
+          "expr": "typesense_request_latency_seconds{host=~\"$host\",operation=\"delete\",quantile=\"1\"}",
           "legendFormat": "{{host}} · max",
           "range": true,
           "refId": "max"
@@ -1251,7 +1251,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_stats{host=~\"$host\",key=\"cache_hit_ratio\"}",
+          "expr": "typesense_cache_hit_ratio{host=~\"$host\"}",
           "interval": "",
           "legendFormat": "{{host}}",
           "range": true,
@@ -1344,7 +1344,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_stats{host=~\"$host\",key=\"cache_hit_count\"}",
+          "expr": "typesense_cache_hits{host=~\"$host\"}",
           "legendFormat": "{{host}} · hits",
           "range": true,
           "refId": "hits"
@@ -1355,7 +1355,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_stats{host=~\"$host\",key=\"cache_miss_count\"}",
+          "expr": "typesense_cache_misses{host=~\"$host\"}",
           "legendFormat": "{{host}} · misses",
           "range": true,
           "refId": "misses"

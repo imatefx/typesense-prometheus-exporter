@@ -18,6 +18,7 @@
 [Getting started](docs/getting-started.md) ·
 [Configuration](docs/configuration.md) ·
 [Metrics](docs/metrics.md) ·
+[Migrating to 1.0](docs/migrating-to-1.0.md) ·
 [Architecture](docs/architecture.md) ·
 [Testing](docs/testing.md) ·
 [Changelog](CHANGELOG.md)
@@ -26,13 +27,16 @@
 
 </div>
 
+> [!IMPORTANT]
+> **Upgrading from 0.4.x? 0.5.0 renames the metrics.** The new 1.0 names are the default, so dashboards and queries built on `typesense_metrics{key=…}` or `typesense_stats{key=…}` need updating. Set `TYPESENSE_METRIC_NAMES=both` to keep the old names alongside the new ones while you migrate. See [migrating to 1.0](docs/migrating-to-1.0.md).
+
 ## Features
 
 | | |
 |---|---|
 | 🩺 **Health and cluster state** | `typesense_health` and `typesense_raft_state` per node. Alert on an unhealthy node, or on a cluster that has lost its leader. |
 | 📊 **System and memory** | CPU for every core, disk, memory, swap, network, and Typesense's allocator memory. |
-| ⚡ **Request stats** | Requests per second, and latency for search, write, import and delete: average, p70, p95, p99, min and max. Broken down per endpoint and per collection, plus cache hits and misses and pending write batches. |
+| ⚡ **Request stats** | Requests per second, and latency in seconds for search, write, import and delete: average, p70, p95, p99, min and max. Broken down per endpoint and per collection, plus cache hits and misses and pending write batches. |
 | 🔁 **Replication and collections** | Raft committed index and queued writes per node, so you can see replication lag. Document count per collection. Typesense version per node. |
 | 🎯 **Honest failures** | If Typesense can't be reached, its metrics are left out, never faked as zeros. A per-request timeout keeps a hung node from stalling scrapes. |
 | 📦 **Tiny image** | A static binary in a `FROM scratch` image, for linux/amd64 and linux/arm64. |
@@ -54,7 +58,7 @@ open http://localhost:3000        # Grafana: admin / admin
 docker run -d -p 8888:8888 \
   -e TYPESENSE_HOST=typesense-1.internal \
   -e TYPESENSE_API_KEY=<admin-api-key> \
-  imatefx/typesense-prometheus-exporter:v0.4.1
+  imatefx/typesense-prometheus-exporter:v0.5.0
 
 curl -s localhost:8888/metrics | grep -E '^typesense_(health|raft_state)'
 ```
@@ -72,6 +76,7 @@ Then add the exporters to Prometheus, and import the [dashboards](grafana/) and 
 | `--typesense-timeout` | `TYPESENSE_TIMEOUT` | `5` seconds (`0` disables); keep it below Prometheus' `scrape_timeout` |
 | `--exporter-bind-address` | `EXPORTER_BIND_ADDRESS` | `0.0.0.0` |
 | `--exporter-bind-port` | `EXPORTER_BIND_PORT` | `8888` |
+| `--metric-names` | `TYPESENSE_METRIC_NAMES` | `v1` (`both` or `legacy` keep the 0.4 names; see [migrating](docs/migrating-to-1.0.md)) |
 
 See [configuration](docs/configuration.md) for API key permissions, timeouts, failure behaviour, Prometheus and Grafana setup.
 
@@ -86,11 +91,15 @@ See [configuration](docs/configuration.md) for API key permissions, timeouts, fa
 | `typesense_collection_documents{collection=…}` | Documents per collection |
 | `typesense_info{version=…}` | Typesense version of each node |
 | `typesense_scrape_success{endpoint=…}` | Whether each Typesense endpoint could be read, for spotting key or version problems |
-| `typesense_metrics{key=…}` | CPU (per core), disk, memory, swap, network, allocator memory |
-| `typesense_stats{key=…}` | Every numeric `/stats.json` field: requests per second, latency avg/p70/p95/p99/min/max, pending writes, cache hits/misses/ratio |
-| `typesense_stats_*_by_collection` | Requests per second and latency per collection and action |
+| `typesense_system_*` | CPU (`…_cpu_active_ratio`, per core `…_cpu_core_active_ratio{core}`), memory, swap and disk in bytes, network byte counters (`…_bytes_total`) |
+| `typesense_process_memory_*` | Typesense's allocator memory in bytes, and its fragmentation ratio |
+| `typesense_requests_per_second{operation=…}` | Requests per second for search, import, write and delete; plus `typesense_all_requests_per_second` and `typesense_overloaded_requests_per_second` |
+| `typesense_request_latency_seconds{operation=…,quantile=…}` | Latency min (`0`), p70, p95, p99 and max (`1`); the average is `typesense_request_latency_avg_seconds` |
+| `typesense_cache_hit_ratio`, `typesense_cache_hits`, `typesense_cache_misses` | Search cache; plus `typesense_pending_write_batches` |
+| `typesense_route_{latency_seconds,requests_per_second}{route=…}`, `typesense_collection_{latency_seconds,requests_per_second}{collection=…,action=…}` | Requests per second and latency per API route, and per collection and action |
+| `typesense_unmapped{source=…,key=…}` | Numeric Typesense fields the exporter has no name for yet (raw values) |
 
-See the [metrics reference](docs/metrics.md) for every key, with example PromQL.
+See the [metrics reference](docs/metrics.md) for every family, with units and example PromQL. These are the 1.0 names, the default since 0.5.0; the 0.4 names map over as shown in the [migration guide](docs/migrating-to-1.0.md).
 
 ## Alerts
 
@@ -141,7 +150,7 @@ make up / down    # start / stop the Docker Compose stack
 ./build-cross.sh  # static linux/amd64 + linux/arm64 binaries
 ```
 
-There are 56 tests in three layers. **Unit** and **integration** tests run against a mock Typesense. **End-to-end** tests run against a real cluster and break it on purpose: leader failover, a hung node, quorum loss. See [testing](docs/testing.md) for the full list.
+There are 80 tests in three layers. **Unit** and **integration** tests run against a mock Typesense. **End-to-end** tests run against a real cluster and break it on purpose: leader failover, a hung node, quorum loss. See [testing](docs/testing.md) for the full list.
 
 ## Contributors
 

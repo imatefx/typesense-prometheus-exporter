@@ -14,8 +14,23 @@ Every option can be set as a command-line flag or as an environment variable. Th
 | `--typesense-timeout` | `TYPESENSE_TIMEOUT` | `5` | Seconds allowed for each Typesense request; `0` disables the timeout. See [Timeouts](#timeouts). |
 | `--exporter-bind-address` | `EXPORTER_BIND_ADDRESS` | `0.0.0.0` | Address the exporter listens on. |
 | `--exporter-bind-port` | `EXPORTER_BIND_PORT` | `8888` | Port the exporter listens on. |
+| `--metric-names` | `TYPESENSE_METRIC_NAMES` | `v1` | Which metric names to export: `v1`, `both` or `legacy`. See [Metric names](#metric-names). |
 
 `typesense-prometheus-exporter --help` prints the same list. Logs go to stdout at `INFO` level, and failed Typesense calls are logged at `WARN`.
+
+## Metric names
+
+**0.5.0 renamed the metrics from `/metrics.json` and `/stats.json`** (units in the name, base units, one family per value). `--metric-names` / `TYPESENSE_METRIC_NAMES` picks which names are exported:
+
+| Value | Exports |
+|---|---|
+| `v1` *(default)* | The 1.0 names only, listed in the [metrics reference](metrics.md). Unknown Typesense fields go to `typesense_unmapped{source,key}`. |
+| `both` | The 1.0 names and the 0.4 names side by side, for moving dashboards and queries over |
+| `legacy` | The 0.4 names only (`typesense_metrics{key}`, `typesense_stats{key}`, `typesense_stats_*`), exactly as 0.4.x |
+
+Any other value is rejected at startup. Health, raft, version, collection and scrape-health metrics are the same in every mode, so the bundled alert rules work with any value.
+
+**Upgrading from 0.4.x with the default breaks queries that use the old names.** Set `TYPESENSE_METRIC_NAMES=both` while you migrate. `legacy` and `both` are removed in 1.0.0. See [migrating to 1.0](migrating-to-1.0.md).
 
 ## Endpoints
 
@@ -30,8 +45,8 @@ On every scrape the exporter calls six Typesense endpoints:
 
 | Endpoint | Used for | Scoped-key action |
 |---|---|---|
-| `/metrics.json` | `typesense_metrics` | `metrics.json:list` |
-| `/stats.json` | all `typesense_stats*` metrics | `stats.json:list` |
+| `/metrics.json` | `typesense_system_*`, `typesense_process_*` (0.4: `typesense_metrics`) | `metrics.json:list` |
+| `/stats.json` | request rates, latency, cache, `typesense_route_*`, `typesense_collection_*_seconds`/`_per_second` (0.4: `typesense_stats*`) | `stats.json:list` |
 | `/debug` | `typesense_raft_state`, `typesense_info` | `debug:list` |
 | `/status` | `typesense_raft_committed_index`, `typesense_raft_queued_writes` | `status:list` |
 | `/collections` | `typesense_collection_documents` | `collections:list` |

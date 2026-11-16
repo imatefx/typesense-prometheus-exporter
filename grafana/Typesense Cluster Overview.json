@@ -322,7 +322,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(typesense_stats{host=~\"$host\",key=\"search_requests_per_second\"})",
+          "expr": "sum(typesense_requests_per_second{host=~\"$host\",operation=\"search\"})",
           "legendFormat": "",
           "range": true,
           "refId": "A"
@@ -349,7 +349,7 @@
           "color": {
             "mode": "thresholds"
           },
-          "unit": "ms",
+          "unit": "s",
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
@@ -360,11 +360,11 @@
               },
               {
                 "color": "orange",
-                "value": 50
+                "value": 0.05
               },
               {
                 "color": "red",
-                "value": 200
+                "value": 0.2
               }
             ]
           }
@@ -392,7 +392,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max(typesense_stats{host=~\"$host\",key=\"search_95Percentile_latency_ms\"})",
+          "expr": "max(typesense_request_latency_seconds{host=~\"$host\",operation=\"search\",quantile=\"0.95\"})",
           "legendFormat": "",
           "range": true,
           "refId": "A"
@@ -455,7 +455,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "avg(typesense_stats{host=~\"$host\",key=\"cache_hit_ratio\"})",
+          "expr": "avg(typesense_cache_hit_ratio{host=~\"$host\"})",
           "legendFormat": "",
           "range": true,
           "refId": "A"
@@ -1081,7 +1081,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_stats{host=~\"$host\",key=\"total_requests_per_second\"}",
+          "expr": "typesense_all_requests_per_second{host=~\"$host\"}",
           "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
@@ -1144,7 +1144,7 @@
               }
             ]
           },
-          "unit": "ms"
+          "unit": "s"
         },
         "overrides": []
       },
@@ -1174,7 +1174,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_stats{host=~\"$host\",key=\"search_95Percentile_latency_ms\"}",
+          "expr": "typesense_request_latency_seconds{host=~\"$host\",operation=\"search\",quantile=\"0.95\"}",
           "legendFormat": "{{host}} · p95",
           "range": true,
           "refId": "p95"
@@ -1185,7 +1185,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_stats{host=~\"$host\",key=\"search_99Percentile_latency_ms\"}",
+          "expr": "typesense_request_latency_seconds{host=~\"$host\",operation=\"search\",quantile=\"0.99\"}",
           "legendFormat": "{{host}} · p99",
           "range": true,
           "refId": "p99"

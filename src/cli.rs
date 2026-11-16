@@ -1,6 +1,30 @@
 use std::{fmt, path::PathBuf};
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
+
+/// Which metric names the exporter emits. See `docs/metrics-v1.md`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub enum MetricNames {
+    /// The 1.0 names only.
+    #[default]
+    V1,
+    /// The 1.0 names and the 0.4 names, for migrating queries.
+    Both,
+    /// The 0.4 names only (`typesense_metrics{key}`, `typesense_stats{key}`, ...).
+    Legacy,
+}
+
+impl MetricNames {
+    /// Whether the 1.0 names are emitted.
+    pub fn v1(self) -> bool {
+        matches!(self, Self::V1 | Self::Both)
+    }
+
+    /// Whether the 0.4 names are emitted.
+    pub fn legacy(self) -> bool {
+        matches!(self, Self::Legacy | Self::Both)
+    }
+}
 
 /// Expose Typesense metrics and stats in Prometheus format
 #[derive(Parser, Clone)]
@@ -47,6 +71,11 @@ pub struct CliArgs {
     /// up as unhealthy instead of a failed scrape.
     #[arg(long, env, default_value_t = 5)]
     pub typesense_timeout: u64,
+
+    /// Metric names to export: `v1` (the 1.0 names), `both` (1.0 and 0.4
+    /// names, while moving queries over) or `legacy` (0.4 names only).
+    #[arg(long, env = "TYPESENSE_METRIC_NAMES", value_enum, default_value_t = MetricNames::V1)]
+    pub metric_names: MetricNames,
 }
 
 impl CliArgs {
@@ -94,6 +123,7 @@ impl fmt::Debug for CliArgs {
             .field("exporter_bind_address", &self.exporter_bind_address)
             .field("exporter_bind_port", &self.exporter_bind_port)
             .field("typesense_timeout", &self.typesense_timeout)
+            .field("metric_names", &self.metric_names)
             .finish()
     }
 }
@@ -116,6 +146,7 @@ mod tests {
         assert_eq!(args.exporter_bind_address, "0.0.0.0");
         assert_eq!(args.exporter_bind_port, 8888);
         assert_eq!(args.typesense_timeout, 5);
+        assert_eq!(args.metric_names, MetricNames::V1);
         assert_eq!(args.api_key().unwrap(), "key");
     }
 
@@ -215,5 +246,48 @@ mod tests {
         assert!(remote.sends_key_in_plaintext());
         assert!(!local.sends_key_in_plaintext());
         assert!(!tls.sends_key_in_plaintext());
+    }
+
+    #[test]
+    fn parses_metric_names() {
+        for (value, expected) in [
+            ("v1", MetricNames::V1),
+            ("both", MetricNames::Both),
+            ("legacy", MetricNames::Legacy),
+        ] {
+            let args = parse(&[
+                "--typesense-host=ts",
+                "--typesense-api-key=k",
+                &format!("--metric-names={value}"),
+            ])
+            .unwrap();
+            assert_eq!(args.metric_names, expected, "{value}");
+        }
+        assert!(parse(&[
+            "--typesense-host=ts",
+            "--typesense-api-key=k",
+            "--metric-names=v2"
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn metric_names_select_the_name_sets() {
+        assert!(MetricNames::V1.v1() && !MetricNames::V1.legacy());
+        assert!(MetricNames::Both.v1() && MetricNames::Both.legacy());
+        assert!(!MetricNames::Legacy.v1() && MetricNames::Legacy.legacy());
+    }
+
+    #[test]
+    fn metric_names_reads_its_environment_variable() {
+        let arg = CliArgs::command()
+            .get_arguments()
+            .find(|a| a.get_id() == "metric_names")
+            .unwrap()
+            .clone();
+        assert_eq!(
+            arg.get_env().and_then(|e| e.to_str()),
+            Some("TYPESENSE_METRIC_NAMES")
+        );
     }
 }

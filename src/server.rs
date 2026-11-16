@@ -4,7 +4,7 @@ use axum::{extract::State, routing::get, Router};
 use tokio::signal;
 
 use crate::{
-    cli::CliArgs,
+    cli::{CliArgs, MetricNames},
     prometheus_exp::{self, Scrape},
     typesense::TypesenseClient,
 };
@@ -13,6 +13,7 @@ struct AppState {
     client: TypesenseClient,
     host: String,
     port: u16,
+    metric_names: MetricNames,
 }
 
 /// Build the exporter's HTTP router for the Typesense node described by `args`.
@@ -23,6 +24,7 @@ pub fn router(args: &CliArgs) -> std::io::Result<Router> {
         client,
         host: args.typesense_host.clone(),
         port: args.typesense_port,
+        metric_names: args.metric_names,
     });
 
     Ok(Router::new()
@@ -124,6 +126,7 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> String {
         collections,
         endpoints,
         scrape_duration: Some(scrape_duration),
+        metric_names: state.metric_names,
     };
 
     prometheus_exp::generate_metrics(&scrape, &state.host, state.port)

@@ -420,11 +420,14 @@ async fn cluster_has_one_leader_and_two_followers() {
             "exporter-{node} only reports its own node"
         );
         assert!(
-            samples
-                .iter()
-                .any(|s| s.labels.get("key").map(String::as_str)
-                    == Some("system_memory_total_bytes")),
+            gauge(&samples, "typesense_system_memory_total_bytes").is_some_and(|b| b > 0.0),
             "exporter-{node} reports system metrics"
+        );
+        assert!(
+            !samples
+                .iter()
+                .any(|s| s.name == "typesense_metrics" || s.name == "typesense_stats"),
+            "exporter-{node} emits no 0.4 catch-all families in v1 mode"
         );
         assert!(
             samples.iter().any(|s| s.name == "typesense_info"
@@ -461,7 +464,7 @@ async fn cluster_has_one_leader_and_two_followers() {
         .await
         .unwrap();
     prom_is(
-        r#"count(count by (host) (typesense_metrics{key="system_memory_total_bytes"}))"#,
+        "count(count by (host) (typesense_system_memory_total_bytes))",
         3.0,
     )
     .await
@@ -499,8 +502,8 @@ async fn traffic_is_reported_by_the_node_that_served_it() {
                 let samples = scrape(node).await?;
                 ensure(
                     samples.iter().any(|s| {
-                        s.name == "typesense_stats_requests_per_second_by_collection"
-                            && s.labels["collection_name"] == "e2e_products"
+                        s.name == "typesense_collection_requests_per_second"
+                            && s.labels["collection"] == "e2e_products"
                             && s.labels["action"] == "documents/search"
                             && s.labels["host"] == format!("typesense-{node}")
                     }),
@@ -551,8 +554,8 @@ async fn traffic_is_reported_by_the_node_that_served_it() {
             let keys: Vec<String> = scrape(1)
                 .await?
                 .into_iter()
-                .filter(|s| s.name == "typesense_stats_requests_per_second")
-                .map(|s| s.labels["key"].clone())
+                .filter(|s| s.name == "typesense_route_requests_per_second")
+                .map(|s| s.labels["route"].clone())
                 .filter(|k| k.contains("/collections/e2e_products/documents/"))
                 .collect();
             ensure(
@@ -580,19 +583,24 @@ async fn traffic_is_reported_by_the_node_that_served_it() {
                 search(1, "e2e_products", q, false).await?;
             }
             let samples = scrape(1).await?;
-            for key in [
-                "search_95Percentile_latency_ms",
-                "search_99Percentile_latency_ms",
-                "search_max_latency_ms",
-            ] {
+            for quantile in ["0.95", "0.99", "1"] {
                 ensure(
-                    samples
-                        .iter()
-                        .any(|s| s.name == "typesense_stats" && s.labels["key"] == key),
-                    format!("{key} missing"),
+                    samples.iter().any(|s| {
+                        s.name == "typesense_request_latency_seconds"
+                            && s.labels["operation"] == "search"
+                            && s.labels["quantile"] == quantile
+                    }),
+                    format!("search latency quantile {quantile} missing"),
                 )?;
             }
-            Ok(())
+            ensure(
+                samples.iter().any(|s| {
+                    s.name == "typesense_requests_per_second"
+                        && s.labels["operation"] == "search"
+                        && s.value > 0.0
+                }),
+                "search requests_per_second missing or 0",
+            )
         },
     )
     .await;
@@ -607,7 +615,7 @@ async fn traffic_is_reported_by_the_node_that_served_it() {
             let ratio = scrape(1)
                 .await?
                 .iter()
-                .find(|s| s.name == "typesense_stats" && s.labels["key"] == "cache_hit_ratio")
+                .find(|s| s.name == "typesense_cache_hit_ratio")
                 .map(|s| s.value);
             ensure(
                 ratio.is_some_and(|r| r > 0.0),
@@ -698,7 +706,8 @@ async fn grafana_dashboards_show_every_node() {
 
     let all = ["typesense-1", "typesense-2", "typesense-3"];
     for expr in [
-        r#"typesense_metrics{key=~"system_cpu[0-9]+_active_percentage"}"#,
+        "typesense_system_cpu_core_active_ratio",
+        "rate(typesense_system_network_received_bytes_total[1m])",
         "typesense_raft_state",
         "typesense_health",
     ] {
@@ -924,14 +933,14 @@ fn parses_exporter_output() {
     let samples = parse_samples(
         "# HELP x y\n\
          typesense_health{host=\"typesense-1\",port=\"8108\"} 1\n\
-         typesense_stats_latency_ms{host=\"h\",key=\"GET /collections/a/documents/search\",port=\"1\"} 2.5\n",
+         typesense_route_latency_seconds{host=\"h\",port=\"1\",route=\"GET /collections/a/documents/search\"} 0.0025\n",
     );
 
     assert_eq!(samples.len(), 2);
     assert_eq!(samples[0].labels["host"], "typesense-1");
     assert_eq!(
-        samples[1].labels["key"],
+        samples[1].labels["route"],
         "GET /collections/a/documents/search"
     );
-    assert_eq!(samples[1].value, 2.5);
+    assert_eq!(samples[1].value, 0.0025);
 }

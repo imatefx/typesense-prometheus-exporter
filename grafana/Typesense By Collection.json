@@ -163,7 +163,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "builder",
-          "expr": "typesense_stats_requests_per_second_by_collection{host=~\"$host\",collection_name=~\"$collection\"}",
+          "expr": "typesense_collection_requests_per_second{host=~\"$host\",collection=~\"$collection\"}",
           "legendFormat": "{{host}} · {{method}} {{action}}",
           "range": true,
           "refId": "A"
@@ -226,7 +226,7 @@
               }
             ]
           },
-          "unit": "ms"
+          "unit": "s"
         },
         "overrides": []
       },
@@ -256,7 +256,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "builder",
-          "expr": "typesense_stats_latency_ms_by_collection{host=~\"$host\",collection_name=~\"$collection\"}",
+          "expr": "typesense_collection_latency_seconds{host=~\"$host\",collection=~\"$collection\"}",
           "legendFormat": "{{host}} · {{method}} {{action}}",
           "range": true,
           "refId": "A"
@@ -488,7 +488,7 @@
           "refId": "StandardVariableQuery"
         },
         "refresh": 2,
-        "regex": "/.*collection_name=\\\"([^\\\"]+).*/",
+        "regex": "",
         "skipUrlSync": false,
         "sort": 0,
         "type": "query"

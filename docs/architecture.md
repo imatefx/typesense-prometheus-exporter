@@ -2,7 +2,7 @@
 
 ## Overview
 
-The exporter is a small stateless HTTP service. Each time Prometheus scrapes `/metrics`, the exporter queries one Typesense node, turns the answers into Prometheus gauges, and returns them. It keeps nothing between scrapes.
+The exporter is a small stateless HTTP service. Each time Prometheus scrapes `/metrics`, the exporter queries one Typesense node, turns the answers into Prometheus metrics, and returns them. It keeps nothing between scrapes.
 
 ```mermaid
 flowchart LR
@@ -43,7 +43,7 @@ sequenceDiagram
 
 1. **Fetch.** `server::metrics_handler` calls the six Typesense endpoints concurrently with `tokio::join!`. They share one reqwest client, which applies `TYPESENSE_TIMEOUT` to each request.
 2. **Decide.** Each result is either kept or logged and dropped (`log_failure`). The handler builds a `Scrape` from what survived: optional metrics, stats, status and collections, a health flag, a raft state and a version.
-3. **Render.** `prometheus_exp::generate_metrics` builds a fresh Prometheus registry for this scrape, adds a gauge for each metric that has data, and encodes it to text.
+3. **Map and render.** `prometheus_exp::generate_metrics` builds a fresh Prometheus registry for this scrape and adds a series for each value that has data, then encodes it to text. `/metrics.json` and `/stats.json` values go through a name-mapping step chosen by `--metric-names` (the `metric_names` field of `Scrape`): `export_v1_metrics` / `export_v1_stats` map each Typesense field to its 1.0 family, convert units (ms → seconds, percent → ratio) and send fields without a name to `typesense_unmapped`; `export_legacy_metrics` / `export_legacy_stats` produce the 0.4 families. `both` runs both. The other families are added once, whatever the mode.
 
 A fresh registry on every scrape means a metric that disappears from Typesense also disappears from the exporter. Nothing stale is left behind.
 
@@ -52,11 +52,11 @@ A fresh registry on every scrape means a metric that disappears from Typesense a
 | Module | Responsibility |
 |---|---|
 | `src/main.rs` | Entry point: logging setup, parse CLI, `server::run` |
-| `src/cli.rs` | `CliArgs`: flags and environment variables (clap) |
+| `src/cli.rs` | `CliArgs`: flags and environment variables (clap), including `MetricNames` (`v1`, `both`, `legacy`) |
 | `src/server.rs` | axum router (`/`, `/metrics`), scrape handler, graceful shutdown |
 | `src/typesense/mod.rs` | `TypesenseClient`: one HTTP client, base URL, API key; one method per endpoint |
-| `src/typesense/models/` | serde models for the six endpoint responses. `metrics` and `stats` expose `entries()`, the `(key, value)` pairs to export |
-| `src/prometheus_exp.rs` | `Scrape`, plus rendering to Prometheus text: gauges, per-collection parsing, label handling |
+| `src/typesense/models/` | serde models for the six endpoint responses. For the 1.0 names, `TypesenseMetrics::fixed_entries()` gives the fixed `/metrics.json` fields and `core_number()` picks the core out of a per-core CPU key; the 1.0 mapping reads the remaining fields (per-core values and unmapped ones) from `other` directly. `TypesenseMetrics::entries()` gives the `(key, value)` pairs for the 0.4 output. `TypesenseStats::entries()` gives every numeric `/stats.json` field and feeds both name sets |
+| `src/prometheus_exp.rs` | `Scrape`, plus rendering to Prometheus text: the 1.0 and 0.4 name mappings, unit conversion, per-collection parsing, label handling |
 | `src/lib.rs` | Exposes the modules so integration and e2e tests can build the real router |
 
 ## Design decisions
@@ -69,7 +69,9 @@ A fresh registry on every scrape means a metric that disappears from Typesense a
 
 **Timeout below the scrape timeout.** A hung Typesense node must not hold the response past Prometheus' scrape timeout, or the whole scrape is lost and the problem shows up as the wrong alert. See [configuration](configuration.md#timeouts).
 
-**Export every numeric stat.** `/stats.json` keeps gaining fields (latency percentiles and min/max, cache counters). The model captures all top-level fields and exports every numeric one, so new Typesense versions need no exporter change.
+**Export every numeric stat.** `/stats.json` keeps gaining fields (latency percentiles and min/max, cache counters). The model captures all top-level fields and exports every numeric one, so new Typesense versions need no exporter change. With the 1.0 names, a field without a mapping is exported as `typesense_unmapped{source,key}` with its raw value until it gets a proper name.
+
+**Names carry the unit, in base units.** Since 0.5.0, each value has its own family with the unit as a suffix (`_seconds`, `_bytes`, `_ratio`, counters `_total`), operations and quantiles are labels, and network bytes are counters. Unit conversion happens at export time; the models keep Typesense's raw values. See the [design note](metrics-v1.md).
 
 **Bounded labels.** Typesense's per-endpoint stats include document and other resource IDs in the path. Exported as-is, every document read by ID would create new series. Endpoints are normalised to `…/documents/:id` before export, and the by-collection metrics don't repeat the raw endpoint, so the number of series depends on collections and routes, not on data.
 
@@ -77,7 +79,7 @@ A fresh registry on every scrape means a metric that disappears from Typesense a
 
 **Per-core CPU by pattern.** `/metrics.json` has one `system_cpuN_active_percentage` key per core. The model captures unknown keys with `#[serde(flatten)]` and exports those matching `system_cpu<digits>_active_percentage`, so any core count works.
 
-**Per-collection metrics from endpoint keys.** `/stats.json` reports latency and request rate keyed by endpoint, e.g. `GET /collections/products/documents/search`. A regex splits collection endpoints into `method`, `collection_name` and `action` labels. The original endpoint string is kept as the `key` label, so series never collide.
+**Per-collection metrics from endpoint keys.** `/stats.json` reports latency and request rate keyed by endpoint, e.g. `GET /collections/products/documents/search`. A regex splits collection endpoints into `method`, `collection` and `action` labels (`collection_name` in the 0.4 names). The full route is exported separately as `typesense_route_*{route}`.
 
 ## Docker Compose stack
 
@@ -104,7 +106,7 @@ flowchart TB
 
 | Artifact | How |
 |---|---|
-| Docker image | Multi-stage [`Dockerfile`](../Dockerfile): Rust 1.88 on Alpine builds a static musl binary, with cached dependencies. The final image is `FROM scratch` with CA certificates, running as the unprivileged user `65534`. |
+| Docker image | Multi-stage [`Dockerfile`](../Dockerfile): Rust 1.100 on Alpine builds a static musl binary, with cached dependencies. The final image is `FROM scratch` with CA certificates, running as the unprivileged user `65534`. |
 | Multi-arch image on Docker Hub | [`docker.yml`](../.github/workflows/docker.yml) runs on every version tag (`vX.Y.Z`). linux/amd64 and linux/arm64 each build on a native GitHub runner (`ubuntu-latest`, `ubuntu-24.04-arm`), with no QEMU emulation, and push by digest. A final job merges them into one multi-arch `:vX.Y.Z` / `:latest` image and attests it. Pull requests that touch the image build both architectures without pushing. |
 | Static Linux binaries | [`build-cross.sh`](../build-cross.sh) runs buildx and writes `releases/*-linux-{amd64,arm64}-musl` |
 | Release binaries | [`rust.yml`](../.github/workflows/rust.yml) builds Linux, macOS and Windows targets on tags and creates the GitHub release, with notes taken from `CHANGELOG.md` and a `SHA256SUMS` file |

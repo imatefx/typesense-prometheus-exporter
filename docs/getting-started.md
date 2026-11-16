@@ -47,7 +47,7 @@ Each node reports its own health, raft role and the traffic it served, so you ne
 docker run -d --name typesense-exporter -p 8888:8888 \
   -e TYPESENSE_HOST=typesense-1.internal \
   -e TYPESENSE_API_KEY=<admin-api-key> \
-  imatefx/typesense-prometheus-exporter:v0.4.1
+  imatefx/typesense-prometheus-exporter:v0.5.0
 ```
 
 Or the binary. Build it with `cargo build --release`, or use the static Linux builds from `./build-cross.sh`.
