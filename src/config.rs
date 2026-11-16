@@ -134,7 +134,9 @@ pub fn merge(
                     "{at}: set only one of typesense_api_key_file and typesense_api_key_env"
                 ))
             }
-            (Some(key_file), None) => args.typesense_api_key_file = Some(key_file),
+            (Some(key_file), None) => {
+                args.typesense_api_key_file = Some(relative_to(&path, key_file))
+            }
             (None, Some(var)) => match env(&var).map(|v| v.trim().to_string()) {
                 Some(v) if !v.is_empty() => args.typesense_api_key = Some(v),
                 _ => {
@@ -157,8 +159,36 @@ pub fn merge(
     Ok(())
 }
 
+/// A relative path in the config file is relative to the file's directory,
+/// so the config works the same from any working directory.
+pub(crate) fn relative_to(config: &std::path::Path, path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        return path;
+    }
+    config
+        .parent()
+        .map_or_else(|| path.clone(), |dir| dir.join(&path))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn relative_paths_are_relative_to_the_config_file() {
+        let cfg = std::path::Path::new("/etc/exporter/exporter.toml");
+        assert_eq!(
+            relative_to(cfg, "secrets/key".into()),
+            PathBuf::from("/etc/exporter/secrets/key")
+        );
+        assert_eq!(
+            relative_to(cfg, "/run/key".into()),
+            PathBuf::from("/run/key")
+        );
+        assert_eq!(
+            relative_to(std::path::Path::new("exporter.toml"), "key".into()),
+            PathBuf::from("key")
+        );
+    }
+
     use super::*;
     use clap::{CommandFactory, FromArgMatches};
 

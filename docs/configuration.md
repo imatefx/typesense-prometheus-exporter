@@ -30,7 +30,7 @@ api_key_file = "/run/secrets/typesense-prod"
 
 - **No inline secrets.** `typesense_api_key` and `api_key` are not accepted in the file; they are errors that say so. Name a file (`typesense_api_key_file`) or an environment variable (`typesense_api_key_env`) instead. `--typesense-api-key` and `TYPESENSE_API_KEY` keep working, and a key given by flag or environment replaces the file's key settings.
 - **Unknown keys are errors**, so a typo is never silently ignored. Invalid values are reported with the file, line and key. Errors never contain key values.
-- Relative paths in the file (key files) are relative to the exporter's working directory.
+- Relative paths in the file (key files) are relative to the config file's directory, so the same file works from any working directory.
 - Requirements are checked after merging, so a file-only setup works: at least one of `typesense_host`, `probe_allowed_targets` or a `[clusters.*]` table, and a default key whenever `typesense_host` or `probe_allowed_targets` is used.
 - The file is read once at startup.
 

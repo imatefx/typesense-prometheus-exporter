@@ -114,9 +114,12 @@ impl ProbeConfig {
                 (None, None) => {
                     return Err(format!("{at}: set api_key_file or api_key_env"));
                 }
-                (Some(key_file), None) => crate::cli::read_key_file(&key_file).map_err(|e| {
-                    format!("{at}: cannot read api_key_file {}: {e}", key_file.display())
-                })?,
+                (Some(key_file), None) => {
+                    let key_file = crate::config::relative_to(path, key_file);
+                    crate::cli::read_key_file(&key_file).map_err(|e| {
+                        format!("{at}: cannot read api_key_file {}: {e}", key_file.display())
+                    })?
+                }
                 (None, Some(var)) => match env(&var).map(|v| v.trim().to_string()) {
                     Some(v) if !v.is_empty() => v,
                     _ => {

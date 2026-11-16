@@ -4,7 +4,7 @@ Three layers, from fast and isolated to slow and real:
 
 | Layer | Where | Runs against | Count | Time | Needs |
 |---|---|---|---|---|---|
-| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 83 | < 1s | Rust |
+| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 84 | < 1s | Rust |
 | Integration | [`tests/exporter.rs`](../tests/exporter.rs), [`tests/config_env.rs`](../tests/config_env.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 51 | ~1s | Rust |
 | End-to-end | [`tests/e2e.rs`](../tests/e2e.rs) | A real 3-node Typesense cluster, one exporter, Prometheus and Grafana in Docker | 9 | ~3–5 min | Rust, Docker |
 
@@ -89,6 +89,7 @@ The 1.0 names ([design](metrics-v1.md)) and the `--metric-names` modes:
 | Test | Verifies |
 |---|---|
 | `every_option_can_be_set_in_the_file` | Every option, a key file, and a cluster with an `api_key_env`, can come from the file; the cluster inherits the file's port and protocol |
+| `relative_paths_are_relative_to_the_config_file` | A relative key file path resolves from the config file's directory; absolute paths are unchanged |
 | `flags_beat_the_file_and_the_file_beats_defaults` | A flag wins (even one equal to the default); the file replaces built-in defaults |
 | `a_flag_key_replaces_the_files_key_settings` | A key from a flag skips the file's key settings; `typesense_api_key_env` is read and trimmed |
 | `rejects_bad_key_settings_in_the_file` | Unset or empty `typesense_api_key_env`, and both key sources, are errors naming the setting |
