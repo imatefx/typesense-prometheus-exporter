@@ -13,6 +13,7 @@ use wiremock::{
 const API_KEY: &str = "test-key";
 const METRICS: &str = include_str!("fixtures/metrics.json");
 const STATS: &str = include_str!("fixtures/stats.json");
+const COLLECTIONS: &str = include_str!("fixtures/collections.json");
 
 fn args_for(host: &str, port: u16, timeout: i64) -> CliArgs {
     CliArgs {
@@ -73,9 +74,17 @@ async fn healthy_node(raft_state: i32) -> MockServer {
     mount(
         &mock,
         "/debug",
-        ResponseTemplate::new(200).set_body_json(json!({"state": raft_state, "version": "27.1"})),
+        ResponseTemplate::new(200).set_body_json(json!({"state": raft_state, "version": "30.1"})),
     )
     .await;
+    mount(
+        &mock,
+        "/status",
+        ResponseTemplate::new(200)
+            .set_body_json(json!({"committed_index": 1042, "queued_writes": 3, "state": "LEADER"})),
+    )
+    .await;
+    mount(&mock, "/collections", json_body(COLLECTIONS)).await;
     mock
 }
 
@@ -136,7 +145,7 @@ async fn sends_api_key_to_typesense() {
 
     assert!(out.contains("typesense_metrics{"));
     let requests = mock.received_requests().await.unwrap();
-    assert_eq!(requests.len(), 4, "one request per Typesense endpoint");
+    assert_eq!(requests.len(), 6, "one request per Typesense endpoint");
     assert!(requests
         .iter()
         .all(|r| r.headers.get("x-typesense-api-key").unwrap() == API_KEY));
@@ -320,4 +329,70 @@ async fn zero_timeout_means_no_timeout() {
 
     assert_eq!(health(&out), Some(1.0));
     assert!(out.contains("typesense_metrics{"));
+}
+
+#[tokio::test]
+async fn exports_version_replication_documents_and_percentiles() {
+    let mock = healthy_node(1).await;
+    let base = exporter_for(&mock, -1).await;
+
+    let (_, out) = scrape(&base).await;
+
+    let port = mock.address().port();
+    for line in [
+        format!(r#"typesense_info{{host="127.0.0.1",port="{port}",version="30.1"}} 1"#),
+        format!(r#"typesense_raft_committed_index{{host="127.0.0.1",port="{port}"}} 1042"#),
+        format!(r#"typesense_raft_queued_writes{{host="127.0.0.1",port="{port}"}} 3"#),
+        format!(
+            r#"typesense_collection_documents{{collection="products",host="127.0.0.1",port="{port}"}} 1200"#
+        ),
+        format!(
+            r#"typesense_collection_documents{{collection="articles",host="127.0.0.1",port="{port}"}} 37"#
+        ),
+        format!(
+            r#"typesense_stats{{host="127.0.0.1",key="search_99Percentile_latency_ms",port="{port}"}} 4"#
+        ),
+        format!(
+            r#"typesense_stats{{host="127.0.0.1",key="import_max_latency_ms",port="{port}"}} 7"#
+        ),
+        format!(r#"typesense_stats{{host="127.0.0.1",key="cache_miss_count",port="{port}"}} 15"#),
+    ] {
+        assert!(out.contains(&line), "missing {line}");
+    }
+}
+
+#[tokio::test]
+async fn older_typesense_without_status_still_exports_the_rest() {
+    // Typesense versions without /status answer 404; only that endpoint's
+    // metrics should disappear.
+    let mock = healthy_node(1).await;
+    mock.reset().await;
+    mount(&mock, "/metrics.json", json_body(METRICS)).await;
+    mount(&mock, "/stats.json", json_body(STATS)).await;
+    mount(
+        &mock,
+        "/health",
+        ResponseTemplate::new(200).set_body_json(json!({"ok": true})),
+    )
+    .await;
+    mount(
+        &mock,
+        "/debug",
+        ResponseTemplate::new(200).set_body_json(json!({"state": 1})),
+    )
+    .await;
+    mount(&mock, "/collections", json_body(COLLECTIONS)).await;
+    let base = exporter_for(&mock, -1).await;
+
+    let (status, out) = scrape(&base).await;
+
+    assert_eq!(status, 200);
+    assert!(!out.contains("typesense_raft_committed_index{"));
+    assert!(
+        !out.contains("typesense_info{"),
+        "no version reported, so no info metric"
+    );
+    assert!(out.contains("typesense_collection_documents{"));
+    assert!(out.contains("typesense_metrics{"));
+    assert_eq!(health(&out), Some(1.0));
 }

@@ -7,8 +7,9 @@ use serde::de::DeserializeOwned;
 
 use crate::cli::CliArgs;
 use models::{
-    typesense_debug_model::TypesenseDebug, typesense_health_model::TypesenseHealth,
-    typesense_metrics_model::TypesenseMetrics, typesense_stats_model::TypesenseStats,
+    typesense_collection_model::TypesenseCollection, typesense_debug_model::TypesenseDebug,
+    typesense_health_model::TypesenseHealth, typesense_metrics_model::TypesenseMetrics,
+    typesense_stats_model::TypesenseStats, typesense_status_model::TypesenseStatus,
 };
 
 /// Thin HTTP client for the Typesense monitoring endpoints.
@@ -48,6 +49,14 @@ impl TypesenseClient {
 
     pub async fn debug(&self) -> reqwest::Result<TypesenseDebug> {
         self.get_json("/debug").await
+    }
+
+    pub async fn status(&self) -> reqwest::Result<TypesenseStatus> {
+        self.get_json("/status").await
+    }
+
+    pub async fn collections(&self) -> reqwest::Result<Vec<TypesenseCollection>> {
+        self.get_json("/collections").await
     }
 
     async fn get_json<T: DeserializeOwned>(&self, path: &str) -> reqwest::Result<T> {

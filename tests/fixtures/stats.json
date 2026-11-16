@@ -1,9 +1,16 @@
 {
+  "cache_hit_count": 5,
   "cache_hit_ratio": 0.25,
+  "cache_miss_count": 15,
   "delete_latency_ms": 0,
   "delete_requests_per_second": 0,
-  "import_latency_ms": 0,
-  "import_requests_per_second": 0,
+  "import_70Percentile_latency_ms": 3,
+  "import_95Percentile_latency_ms": 5,
+  "import_99Percentile_latency_ms": 6,
+  "import_latency_ms": 2.5,
+  "import_max_latency_ms": 7,
+  "import_min_latency_ms": 1,
+  "import_requests_per_second": 0.5,
   "latency_ms": {
     "GET /collections/products/documents/search": 1.5,
     "GET /health": 0.1
@@ -14,9 +21,19 @@
     "GET /collections/products/documents/search": 3.4,
     "GET /health": 0.2
   },
+  "search_70Percentile_latency_ms": 1,
+  "search_95Percentile_latency_ms": 3,
+  "search_99Percentile_latency_ms": 4,
   "search_latency_ms": 1.5,
+  "search_max_latency_ms": 6,
+  "search_min_latency_ms": 0,
   "search_requests_per_second": 3.4,
   "total_requests_per_second": 3.6,
+  "write_70Percentile_latency_ms": 0,
+  "write_95Percentile_latency_ms": 0,
+  "write_99Percentile_latency_ms": 0,
   "write_latency_ms": 0,
+  "write_max_latency_ms": 0,
+  "write_min_latency_ms": 0,
   "write_requests_per_second": 0
 }

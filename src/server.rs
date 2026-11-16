@@ -75,18 +75,24 @@ async fn root() -> &'static str {
 /// `typesense_health` and `typesense_raft_state` drop to 0.
 async fn metrics_handler(State(state): State<Arc<AppState>>) -> String {
     let client = &state.client;
-    let (metrics, stats, health, debug) = tokio::join!(
+    let (metrics, stats, health, debug, status, collections) = tokio::join!(
         client.metrics(),
         client.stats(),
         client.health(),
-        client.debug()
+        client.debug(),
+        client.status(),
+        client.collections(),
     );
+    let debug = log_failure("/debug", debug);
 
     let scrape = Scrape {
         metrics: log_failure("/metrics.json", metrics),
         stats: log_failure("/stats.json", stats),
         healthy: log_failure("/health", health).is_some_and(|h| h.ok),
-        raft_state: log_failure("/debug", debug).map_or(0, |d| d.state),
+        raft_state: debug.as_ref().map_or(0, |d| d.state),
+        version: debug.and_then(|d| d.version),
+        status: log_failure("/status", status),
+        collections: log_failure("/collections", collections),
     };
 
     prometheus_exp::generate_metrics(&scrape, &state.host, state.port)
