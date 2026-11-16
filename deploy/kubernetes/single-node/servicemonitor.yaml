@@ -15,3 +15,14 @@ spec:
       path: /metrics
       interval: 30s
       scrapeTimeout: 10s   # above TYPESENSE_TIMEOUT (5s)
+    # The exporter's own health: scrapes, Typesense request failures, key reloads.
+    # Both endpoints would get the same job, instance and endpoint labels, so
+    # `up` and scrape_* would collide and TypesenseExporterDown would match
+    # this one. The job name is the one alerts.yml expects.
+    - port: http
+      path: /exporter/metrics
+      interval: 30s
+      relabelings:
+        - action: replace
+          targetLabel: job
+          replacement: typesense-exporter-self

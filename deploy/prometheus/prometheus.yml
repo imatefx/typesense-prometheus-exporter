@@ -25,3 +25,10 @@ scrape_configs:
         target_label: instance
       - target_label: __address__
         replacement: exporter:8888
+
+  # The exporter's own health (scrapes, Typesense request outcomes, key
+  # reloads). Not a Typesense node, so no /probe and no host or port labels.
+  - job_name: typesense-exporter-self
+    metrics_path: /exporter/metrics
+    static_configs:
+      - targets: ["exporter:8888"]

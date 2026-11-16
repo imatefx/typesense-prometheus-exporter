@@ -2,6 +2,7 @@
 
 pub mod cli;
 pub mod config;
+pub mod exporter_metrics;
 pub mod key;
 pub mod logging;
 pub mod probe_config;

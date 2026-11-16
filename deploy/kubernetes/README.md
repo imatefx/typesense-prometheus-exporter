@@ -4,8 +4,8 @@ Plain manifests, no Helm chart. Both run the exporter as user 65534 with a read-
 
 | Folder | Use it when | Prometheus resource |
 |---|---|---|
-| [`single-node/`](single-node) | One exporter next to one Typesense node, scraped at `/metrics` | `ServiceMonitor` |
-| [`cluster-probe/`](cluster-probe) | One exporter for a whole cluster, scraped once per node at `/probe` | `Probe` |
+| [`single-node/`](single-node) | One exporter next to one Typesense node, scraped at `/metrics` | `ServiceMonitor` (two endpoints: the node, and the exporter's own health as job `typesense-exporter-self`) |
+| [`cluster-probe/`](cluster-probe) | One exporter for a whole cluster, scraped once per node at `/probe` | `Probe`, plus a `ServiceMonitor` for the exporter's own health |
 
 Both need the [Prometheus Operator](https://prometheus-operator.dev) CRDs for the `ServiceMonitor` / `Probe`. Without the operator, delete that file from `kustomization.yaml` and use the [plain Prometheus config](cluster-probe/README.md#plain-prometheus-without-the-operator).
 

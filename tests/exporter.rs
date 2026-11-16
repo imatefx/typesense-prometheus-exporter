@@ -1801,3 +1801,434 @@ async fn startup_logs_each_cluster_with_its_node_count_and_no_key() {
     );
     assert!(!out.contains("cluster-SECRET-key-1"), "{out}");
 }
+
+// ---- the exporter's own metrics: /exporter/metrics ----
+
+async fn exporter_metrics(base: &str) -> String {
+    let res = reqwest::get(format!("{base}/exporter/metrics"))
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 200);
+    res.text().await.unwrap()
+}
+
+fn scrapes_total(out: &str, handler: &str, result: &str) -> Option<f64> {
+    gauge(
+        out,
+        &format!(r#"typesense_exporter_scrapes_total{{handler="{handler}",result="{result}"}}"#),
+    )
+}
+
+fn requests_total(out: &str, endpoint: &str, result: &str) -> Option<f64> {
+    gauge(
+        out,
+        &format!(
+            r#"typesense_exporter_typesense_requests_total{{endpoint="{endpoint}",result="{result}"}}"#
+        ),
+    )
+}
+
+#[tokio::test]
+async fn exporter_metrics_count_metrics_and_probe_scrapes_cumulatively() {
+    let node = healthy_node(1).await;
+    let secret_target = "secret-host.example:9999";
+    let mut args = args_for(&node.address().ip().to_string(), node.address().port(), 0);
+    args.probe_allowed_targets = vec![node_addr(&node)];
+    let base = spawn_exporter(args).await;
+
+    scrape(&base).await;
+    probe(&base, &node_addr(&node)).await;
+    assert_eq!(probe(&base, secret_target).await.0, 403);
+    assert_eq!(probe(&base, "http://x/path?y=z").await.0, 400);
+    assert_eq!(
+        reqwest::get(format!("{base}/probe"))
+            .await
+            .unwrap()
+            .status(),
+        400
+    );
+
+    let first = exporter_metrics(&base).await;
+    assert_eq!(scrapes_total(&first, "metrics", "ok"), Some(1.0));
+    assert_eq!(scrapes_total(&first, "metrics", "not_found"), Some(0.0));
+    assert_eq!(scrapes_total(&first, "probe", "ok"), Some(1.0));
+    assert_eq!(scrapes_total(&first, "probe", "refused"), Some(1.0));
+    assert_eq!(scrapes_total(&first, "probe", "invalid"), Some(2.0));
+    for endpoint in [
+        "/metrics.json",
+        "/stats.json",
+        "/health",
+        "/debug",
+        "/status",
+        "/collections",
+    ] {
+        assert_eq!(
+            requests_total(&first, endpoint, "ok"),
+            Some(2.0),
+            "{endpoint}"
+        );
+        assert_eq!(
+            requests_total(&first, endpoint, "error"),
+            Some(0.0),
+            "{endpoint}"
+        );
+        assert_eq!(
+            requests_total(&first, endpoint, "timeout"),
+            Some(0.0),
+            "{endpoint}"
+        );
+        assert_eq!(
+            gauge(
+                &first,
+                &format!(
+                    r#"typesense_exporter_typesense_request_duration_seconds_count{{endpoint="{endpoint}"}}"#
+                )
+            ),
+            Some(2.0),
+            "{endpoint}"
+        );
+    }
+    assert!(first.contains(&format!(
+        r#"typesense_exporter_build_info{{version="{}"}} 1"#,
+        env!("CARGO_PKG_VERSION")
+    )));
+    assert_eq!(
+        gauge(&first, "typesense_exporter_probes_in_flight"),
+        Some(0.0)
+    );
+    assert_eq!(
+        gauge(&first, "typesense_exporter_probe_slot_wait_seconds_count"),
+        Some(1.0)
+    );
+    // Refused and malformed targets never become label values, and nothing
+    // names a node or carries the key.
+    for leak in [
+        secret_target,
+        "secret-host",
+        "/path",
+        "host=",
+        "port=",
+        API_KEY,
+    ] {
+        assert!(!first.contains(leak), "{leak} in:\n{first}");
+    }
+    assert!(
+        !first.contains("key_reload"),
+        "a key from a flag is never reloaded"
+    );
+
+    // Counters accumulate across scrapes.
+    scrape(&base).await;
+    probe(&base, &node_addr(&node)).await;
+    let second = exporter_metrics(&base).await;
+    assert_eq!(scrapes_total(&second, "metrics", "ok"), Some(2.0));
+    assert_eq!(scrapes_total(&second, "probe", "ok"), Some(2.0));
+    assert_eq!(requests_total(&second, "/health", "ok"), Some(4.0));
+}
+
+#[tokio::test]
+async fn exporter_metrics_never_mix_into_a_node_scrape() {
+    let node = healthy_node(1).await;
+    let base = exporter_for(&node, 0).await;
+
+    let (_, out) = scrape(&base).await;
+
+    assert!(!out.contains("typesense_exporter_"), "{out}");
+    let own = exporter_metrics(&base).await;
+    assert!(!own.contains("typesense_health"), "{own}");
+}
+
+#[tokio::test]
+async fn exporter_metrics_count_a_metrics_scrape_without_a_host_as_not_found() {
+    let base = probe_exporter(&["127.0.0.1:1".to_string()], 0).await;
+
+    assert_eq!(
+        reqwest::get(format!("{base}/metrics"))
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+
+    let out = exporter_metrics(&base).await;
+    assert_eq!(scrapes_total(&out, "metrics", "not_found"), Some(1.0));
+    assert_eq!(scrapes_total(&out, "metrics", "ok"), Some(0.0));
+}
+
+#[tokio::test]
+async fn exporter_metrics_split_typesense_requests_into_ok_error_and_timeout() {
+    // Four endpoints hang past the 1s timeout, the others are missing (404).
+    let mock = MockServer::start().await;
+    let slow = json_body(METRICS).set_delay(Duration::from_secs(10));
+    for route in ["/metrics.json", "/stats.json", "/health", "/debug"] {
+        mount(&mock, route, slow.clone()).await;
+    }
+    let base = exporter_for(&mock, 1).await;
+
+    scrape(&base).await;
+
+    let out = exporter_metrics(&base).await;
+    for endpoint in ["/metrics.json", "/stats.json", "/health", "/debug"] {
+        assert_eq!(
+            requests_total(&out, endpoint, "timeout"),
+            Some(1.0),
+            "{endpoint}"
+        );
+        assert_eq!(
+            requests_total(&out, endpoint, "ok"),
+            Some(0.0),
+            "{endpoint}"
+        );
+    }
+    for endpoint in ["/status", "/collections"] {
+        assert_eq!(
+            requests_total(&out, endpoint, "error"),
+            Some(1.0),
+            "{endpoint}"
+        );
+        assert_eq!(
+            requests_total(&out, endpoint, "timeout"),
+            Some(0.0),
+            "{endpoint}"
+        );
+    }
+    // A timeout is observed at about the limit.
+    let sum = gauge(
+        &out,
+        r#"typesense_exporter_typesense_request_duration_seconds_sum{endpoint="/health"}"#,
+    )
+    .unwrap();
+    assert!((0.9..3.0).contains(&sum), "{sum}");
+}
+
+#[tokio::test]
+async fn exporter_metrics_show_probes_in_flight_and_slot_waits() {
+    let delay = Duration::from_millis(400);
+    let node = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"ok": true}))
+                .set_delay(delay),
+        )
+        .mount(&node)
+        .await;
+    let mut args = args_for("unused", 1, 0);
+    args.typesense_host = None;
+    args.probe_allowed_targets = vec![node_addr(&node)];
+    args.probe_max_concurrency = 1;
+    let base = spawn_exporter(args).await;
+
+    let target = node_addr(&node);
+    let (_, _, mid) = tokio::join!(probe(&base, &target), probe(&base, &target), async {
+        tokio::time::sleep(delay / 2).await;
+        exporter_metrics(&base).await
+    });
+
+    assert_eq!(
+        gauge(&mid, "typesense_exporter_probes_in_flight"),
+        Some(1.0)
+    );
+    let out = exporter_metrics(&base).await;
+    assert_eq!(
+        gauge(&out, "typesense_exporter_probes_in_flight"),
+        Some(0.0)
+    );
+    assert_eq!(
+        gauge(&out, "typesense_exporter_probe_slot_wait_seconds_count"),
+        Some(2.0)
+    );
+    let waited = gauge(&out, "typesense_exporter_probe_slot_wait_seconds_sum").unwrap();
+    assert!(
+        waited >= 0.3,
+        "the second probe waited for the first: {waited}"
+    );
+}
+
+/// Poll `/exporter/metrics` until `done` holds (the server notices a closed
+/// connection a moment after the client drops it).
+async fn exporter_metrics_until(base: &str, done: impl Fn(&str) -> bool) -> String {
+    let mut out = exporter_metrics(base).await;
+    for _ in 0..100 {
+        if done(&out) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        out = exporter_metrics(base).await;
+    }
+    out
+}
+
+#[tokio::test]
+async fn exporter_metrics_count_a_probe_cancelled_while_waiting_for_a_slot() {
+    let node = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"ok": true}))
+                .set_delay(Duration::from_millis(1500)),
+        )
+        .mount(&node)
+        .await;
+    let target = node_addr(&node);
+    let mut args = args_for("unused", 1, 0);
+    args.typesense_host = None;
+    args.probe_allowed_targets = vec![target.clone()];
+    args.probe_max_concurrency = 1;
+    let base = spawn_exporter(args).await;
+
+    let first = {
+        let (base, target) = (base.clone(), target.clone());
+        tokio::spawn(async move { probe(&base, &target).await })
+    };
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Prometheus giving up at scrape_timeout: the client drops the connection.
+    let second = {
+        let (base, target) = (base.clone(), target.clone());
+        tokio::spawn(async move { probe(&base, &target).await })
+    };
+    let queued = exporter_metrics_until(&base, |o| {
+        gauge(o, "typesense_exporter_probes_waiting") == Some(1.0)
+    })
+    .await;
+    assert_eq!(
+        gauge(&queued, "typesense_exporter_probes_waiting"),
+        Some(1.0)
+    );
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    second.abort();
+
+    let out = exporter_metrics_until(&base, |o| {
+        scrapes_total(o, "probe", "cancelled") == Some(1.0)
+    })
+    .await;
+    assert_eq!(
+        scrapes_total(&out, "probe", "cancelled"),
+        Some(1.0),
+        "{out}"
+    );
+    assert_eq!(gauge(&out, "typesense_exporter_probes_waiting"), Some(0.0));
+    assert_eq!(
+        gauge(&out, "typesense_exporter_probes_in_flight"),
+        Some(1.0),
+        "only the first probe runs"
+    );
+    // The first probe took its slot at once; the cancelled one still reports
+    // how long it queued.
+    assert_eq!(
+        gauge(&out, "typesense_exporter_probe_slot_wait_seconds_count"),
+        Some(2.0)
+    );
+    let waited = gauge(&out, "typesense_exporter_probe_slot_wait_seconds_sum").unwrap();
+    assert!(waited >= 0.3, "{waited}");
+    // The probe that held the slot finishes normally.
+    let (status, _) = first.await.unwrap();
+    assert_eq!(status, 200);
+    let out = exporter_metrics(&base).await;
+    assert_eq!(scrapes_total(&out, "probe", "ok"), Some(1.0));
+    assert_eq!(scrapes_total(&out, "probe", "cancelled"), Some(1.0));
+}
+
+#[tokio::test]
+async fn exporter_metrics_count_typesense_requests_cancelled_in_flight() {
+    let node = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"ok": true}))
+                .set_delay(Duration::from_secs(5)),
+        )
+        .mount(&node)
+        .await;
+    let target = node_addr(&node);
+    let mut args = args_for("unused", 1, 0);
+    args.typesense_host = None;
+    args.probe_allowed_targets = vec![target.clone()];
+    let base = spawn_exporter(args).await;
+
+    let hung = {
+        let base = base.clone();
+        tokio::spawn(async move { probe(&base, &target).await })
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    hung.abort();
+
+    let out = exporter_metrics_until(&base, |o| {
+        scrapes_total(o, "probe", "cancelled") == Some(1.0)
+    })
+    .await;
+    assert_eq!(
+        scrapes_total(&out, "probe", "cancelled"),
+        Some(1.0),
+        "{out}"
+    );
+    for endpoint in ["/metrics.json", "/health", "/collections"] {
+        assert_eq!(requests_total(&out, endpoint, "cancelled"), Some(1.0));
+        assert_eq!(requests_total(&out, endpoint, "ok"), Some(0.0));
+    }
+    assert_eq!(scrapes_total(&out, "probe", "ok"), Some(0.0));
+}
+
+#[tokio::test]
+async fn exporter_metrics_follow_a_key_file_failing_and_recovering() {
+    let mock = key_recording_node().await;
+    let key_file = temp_file("metrics-rotating-key", "first-key\n");
+    let mut args = args_for(&mock.address().ip().to_string(), mock.address().port(), 0);
+    args.typesense_api_key = None;
+    args.typesense_api_key_file = Some(key_file.clone());
+    let base = spawn_exporter(args).await;
+    let failing = r#"typesense_exporter_key_reload_failing{key="default"}"#;
+    let reloads = |out: &str, result: &str| {
+        gauge(
+            out,
+            &format!(r#"typesense_exporter_key_reloads_total{{key="default",result="{result}"}}"#),
+        )
+    };
+
+    let out = exporter_metrics(&base).await;
+    assert_eq!(gauge(&out, failing), Some(0.0));
+    assert_eq!(reloads(&out, "ok"), Some(0.0));
+
+    scrape(&base).await;
+    rotate(&key_file, "");
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    scrape(&base).await;
+    let out = exporter_metrics(&base).await;
+    assert_eq!(gauge(&out, failing), Some(1.0));
+    assert!(reloads(&out, "failed").unwrap() >= 1.0, "{out}");
+
+    rotate(&key_file, "second-key-is-longer");
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    scrape(&base).await;
+    let out = exporter_metrics(&base).await;
+    assert_eq!(gauge(&out, failing), Some(0.0));
+    assert_eq!(reloads(&out, "ok"), Some(1.0));
+    assert!(!out.contains("first-key") && !out.contains("second-key"));
+}
+
+#[tokio::test]
+async fn exporter_metrics_name_a_cluster_key_by_its_cluster() {
+    let mock = key_recording_node().await;
+    let key_file = temp_file("metrics-cluster-key", "old-cluster-key\n");
+    let config = temp_file(
+        "metrics-probe.toml",
+        &format!(
+            "[clusters.prod]\ntargets = [{:?}]\napi_key_file = {:?}\nprotocol = \"http\"\n",
+            node_addr(&mock),
+            key_file.display().to_string()
+        ),
+    );
+    let base = spawn_exporter(config_only_args(config)).await;
+
+    probe(&base, &node_addr(&mock)).await;
+    rotate(&key_file, "");
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    probe(&base, &node_addr(&mock)).await;
+
+    let out = exporter_metrics(&base).await;
+    assert_eq!(
+        gauge(&out, r#"typesense_exporter_key_reload_failing{key="prod"}"#),
+        Some(1.0)
+    );
+    assert!(!out.contains(r#"key="default""#), "{out}");
+}

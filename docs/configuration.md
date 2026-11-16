@@ -84,7 +84,8 @@ Any other value is rejected at startup. Health, raft, version, collection and sc
 |---|---|
 | `/metrics` | The node set with `--typesense-host`, in Prometheus text format. Always HTTP 200; see [Failure behaviour](#failure-behaviour). 404 with an explanation when no host is configured. |
 | `/probe?target=<node>` | The same output for the named node, which must be allowed. 200 even when the node is down; 400 for a missing or malformed target; 403 for a target that isn't allowed. |
-| `/` | A short text pointer to `/metrics` and `/probe`. |
+| `/exporter/metrics` | The exporter's own health in Prometheus text format: scrape outcomes, Typesense request outcomes and durations, probes in flight and slot waits, API key reloads. Always 200. Never mixed into a node's output, so it is the same with `/metrics` and `/probe`; scrape it as its own job. See [Exporter metrics](metrics.md#exporter-metrics). |
+| `/` | A short text pointer to `/metrics`, `/probe` and `/exporter/metrics`. |
 
 ## Probing several nodes from one exporter
 
@@ -131,7 +132,7 @@ api_key_env = "TYPESENSE_STAGING_KEY"
 `/probe?target=ts-prod-1:8108` finds the cluster that lists the node and scrapes it with that cluster's key and protocol. There is no extra query parameter: the cluster follows from the target, so **a key can only ever be sent to its own cluster's nodes**.
 
 - **Key source.** Exactly one of `api_key_file` (trimmed, must not be empty) or `api_key_env` (the variable must be set and not empty) per cluster. An inline `api_key` is rejected.
-- **Names and targets.** Cluster names match `[A-Za-z0-9_-]+`. Targets are `host[:port]`, parsed like `--probe-allowed-targets` (the port defaults to `typesense_port`). Cluster targets are allowed implicitly; they need no entry in `probe_allowed_targets`.
+- **Names and targets.** Cluster names match `[A-Za-z0-9_-]+`; `default` is reserved (it labels the default key in the exporter metrics). Targets are `host[:port]`, parsed like `--probe-allowed-targets` (the port defaults to `typesense_port`). Cluster targets are allowed implicitly; they need no entry in `probe_allowed_targets`.
 - **One home per node.** A `host:port` listed in two clusters, or in a cluster and in `probe_allowed_targets`, or equal to `typesense_host:typesense_port`, is a startup error naming both places.
 - **Lookup order.** Cluster targets first, always with their cluster's key. Then `probe_allowed_targets` and `typesense_host` with the default key. A target that matches a cluster entry always uses that cluster's key, even with `*` in `probe_allowed_targets`; `*` applies the default key only to targets that match no cluster. The default key is optional when only clusters are configured.
 - **List nodes the way Prometheus targets them.** A target matches a cluster by exact host and port (host names are case-insensitive, a single trailing dot is ignored and IPv6 is compared in canonical form). A different spelling, such as an IP address for the same node, matches no cluster, so with `*` it would get the default key. Use the same names in `targets` and in the Prometheus scrape config.
@@ -159,11 +160,11 @@ scrape_configs:
 
 A key that comes from a file (`--typesense-api-key-file` / `TYPESENSE_API_KEY_FILE`, `typesense_api_key_file`, or a cluster's `api_key_file`) is re-read when the file changes, so you can rotate it without restarting the exporter, for example by updating a Kubernetes Secret.
 
-- **How a change is noticed.** On the first scrape after the file changes, and at least one second after the last look, the exporter compares the file's signature with the one from its last successful read. Symlinks are followed, so the `..data` link swap that Kubernetes uses for Secret volumes counts as a change. An unchanged file is never re-read. On unix the signature is the modified time, length, inode, device and change time, so a rewrite that keeps the length and restores the mtime (`cp -p`, `rsync -t`) is still seen. On other platforms only the modified time and length are compared, so such a rewrite is not noticed until the length or mtime changes. The file system is never touched while a lock is held: while one scrape looks at the file, concurrent scrapes use the key they already have.
+- **How a change is noticed.** The exporter looks at the file every few seconds (a background check, so a rotation is noticed even if nothing is scraped with that key) and on use, at most once per second. It compares the file's signature with the one from its last successful read. Symlinks are followed, so the `..data` link swap that Kubernetes uses for Secret volumes counts as a change. An unchanged file is never re-read. On unix the signature is the modified time, length, inode, device and change time, so a rewrite that keeps the length and restores the mtime (`cp -p`, `rsync -t`) is still seen. On other platforms only the modified time and length are compared, so such a rewrite is not noticed until the length or mtime changes. The file system is never touched while a lock is held: while one scrape looks at the file, concurrent scrapes use the key they already have.
 - **A good new key** is used from the next scrape and logged at info as `reloaded the Typesense API key from <path>`. The key is never logged.
 - **A bad new key** (the file is missing, unreadable, empty, or not a valid HTTP header value, for example because of a byte order mark or control characters) is ignored: the exporter keeps the previous key and logs a warning once for each distinct problem, not on every scrape. A failed read is not remembered, so it is tried again (at most once a second) until it works, for example after a permission fix. Startup is stricter: a bad key file stops the exporter. The error names the file, never the key.
 - **Keys that don't reload.** `--typesense-api-key`, `TYPESENSE_API_KEY`, `typesense_api_key_env` and a cluster's `api_key_env` are read once at startup; changing them needs a restart.
-- **Order of rotation.** Typesense must accept the new key before the exporter starts sending it. Add the new key to Typesense first, update the file, and remove the old key once the exporter logs the reload. A mounted Kubernetes Secret reaches the pod after the kubelet's sync delay (typically 1 to 2 minutes), and the exporter picks it up on its first scrape after that. One scrape uses one key for all its requests.
+- **Order of rotation.** Typesense must accept the new key before the exporter starts sending it. Add the new key to Typesense first, update the file, and remove the old key once the exporter logs the reload. A mounted Kubernetes Secret reaches the pod after the kubelet's sync delay (typically 1 to 2 minutes), and the exporter picks it up within a few seconds, whether or not anything is scraped with that key. One scrape uses one key for all its requests.
 - **Spotting a wrong key.** Typesense's `/health` needs no key, so `typesense_health` stays 1 with a wrong key. Look for `typesense_scrape_success{endpoint!="/health"} == 0`; the bundled `TypesenseScrapeFailing` alert in `deploy/prometheus/alerts.yml` fires on it.
 
 ## API key permissions
@@ -274,6 +275,18 @@ rule_files:
 
 That is one exporter per node. For one exporter in front of every node, use `/probe` instead; see [getting started](getting-started.md#one-exporter-for-the-whole-cluster).
 
+Either way, add a job for the exporter's own metrics (build info, refused probes, Typesense request failures, key reload failures). It is a plain scrape, not a `/probe`, so it has no `host` or `port` labels:
+
+```yaml
+scrape_configs:
+  - job_name: typesense-exporter-self
+    metrics_path: /exporter/metrics
+    static_configs:
+      - targets: ["exporter:8888"]   # every exporter, or the one in front of the cluster
+```
+
+The alert rules below for the exporter's health need this job.
+
 ### Alert rules
 
 [`deploy/prometheus/alerts.yml`](../deploy/prometheus/alerts.yml):
@@ -284,10 +297,23 @@ That is one exporter per node. For one exporter in front of every node, use `/pr
 | `TypesenseUnhealthy` | `typesense_health == 0` | 1m |
 | `TypesenseNoLeader` | `max(typesense_raft_state == bool 1) == 0` | 1m |
 | `TypesenseScrapeFailing` | `typesense_scrape_success{endpoint!="/health"} == 0 unless on (host, port) typesense_health == 0` | 5m |
+| `TypesenseExporterKeyReloadFailing` | `max by (instance, key) (typesense_exporter_key_reload_failing) == 1` | 5m |
+| `TypesenseExporterProbeRefused` | `sum by (instance) (increase(typesense_exporter_scrapes_total{handler="probe",result="refused"}[10m])) > 0` | 0m |
+| `TypesenseExporterProbesSaturated` | `histogram_quantile(0.95, sum by (instance, le) (rate(typesense_exporter_probe_slot_wait_seconds_bucket[10m]))) > 1` | 10m |
+| `TypesenseExporterSelfMetricsDown` | `up{job="typesense-exporter-self"} == 0` | 5m |
 
 With `/probe`, `up` is per probe: the exporter answers 200 even when Typesense is down (that is `TypesenseUnhealthy`), so `TypesenseExporterDown` means the exporter is unreachable or refused the target, and it fires for every node at once when the exporter is down.
 
 `TypesenseScrapeFailing` catches a healthy node whose endpoint the exporter can't read: usually the API key lacks an action, or the Typesense version lacks the endpoint. It stays quiet while the node is down, which `TypesenseUnhealthy` already covers.
+
+The last four are in their own group and use the exporter's [own metrics](metrics.md#exporter-metrics), so they need the `/exporter/metrics` scrape job above:
+
+- `TypesenseExporterKeyReloadFailing`: a rotated API key file can't be read (unreadable, empty, not a valid header value). The exporter keeps using the previous key, so scrapes work until it is revoked; fix the file before then. The exporter log says why.
+- `TypesenseExporterProbeRefused`: someone is probing targets that aren't allowed (403): a scrape config out of step with `--probe-allowed-targets` or the clusters, or another caller. It uses `for: 0m` because the 10m `increase()` window already keeps it firing for 10m after the last refusal, so a `for` would only delay the alert; it clears by itself. Malformed requests (400, for example a port scanner or `/probe` without a target) are counted in `typesense_exporter_scrapes_total{result="invalid"}` but don't alert, because anyone who can reach the exporter can cause them.
+- `TypesenseExporterProbesSaturated`: probes wait more than a second at the 95th percentile for a `--probe-max-concurrency` slot, so scrapes queue and may time out. Raise `--probe-max-concurrency`.
+- `TypesenseExporterSelfMetricsDown`: Prometheus can't scrape `/exporter/metrics`, so the three alerts above can't fire. An absent `up{job="typesense-exporter-self"}` series means the job isn't configured at all, which no alert can detect; check that the series exists.
+
+The rules are checked with `promtool test rules` ([`alerts.test.yml`](../deploy/prometheus/alerts.test.yml)): each new alert is tested firing and not firing.
 
 The `for: 1m` matters for `TypesenseNoLeader`. A normal leader election leaves the cluster without a leader for a few seconds, and the alert should not fire for that. The e2e suite checks that it doesn't.
 

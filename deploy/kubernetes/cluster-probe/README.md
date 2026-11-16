@@ -8,9 +8,11 @@ kubectl apply -k deploy/kubernetes/cluster-probe
 
 The namespace `typesense` appears in `kustomization.yaml`, in the node names in `configmap.yaml` and `probe.yaml` (`typesense-0.typesense.typesense.svc`: pod, headless Service, namespace) and in the prober URL. Change all of them for another namespace.
 
+`servicemonitor.yaml` scrapes the exporter's own health (`/exporter/metrics`) as the job `typesense-exporter-self`, which the exporter alerts in [`alerts.yml`](../../prometheus/alerts.yml) need; `TypesenseExporterSelfMetricsDown` fires if it stops working.
+
 ## Plain Prometheus, without the operator
 
-Skip `probe.yaml` (remove it from `kustomization.yaml`) and add a scrape job, in the same style as the [main README](../../../README.md#quick-start). `typesense-exporter.typesense.svc:8888` is the exporter Service:
+Skip `probe.yaml` and `servicemonitor.yaml` (remove them from `kustomization.yaml`) and add a scrape job, in the same style as the [main README](../../../README.md#quick-start). `typesense-exporter.typesense.svc:8888` is the exporter Service:
 
 ```yaml
 scrape_configs:
@@ -31,6 +33,15 @@ scrape_configs:
         target_label: instance          # instance names the node, not the exporter
       - target_label: __address__
         replacement: typesense-exporter.typesense.svc:8888   # every scrape goes to the exporter
+```
+
+Add a second job for the exporter's own health (probe refusals, Typesense request failures, key reload failures). It is a plain scrape of the Service, without `/probe` or relabeling, and the exporter alerts in [`alerts.yml`](../../prometheus/alerts.yml) need it:
+
+```yaml
+  - job_name: typesense-exporter-self
+    metrics_path: /exporter/metrics
+    static_configs:
+      - targets: [typesense-exporter.typesense.svc:8888]
 ```
 
 If Prometheus discovers the nodes through Kubernetes service discovery instead, keep the same three relabel rules and make `__address__` match the `targets` in `configmap.yaml`.

@@ -8,6 +8,7 @@ Conventions:
 - **Every series carries `host` and `port`**: the Typesense node the exporter scrapes (`TYPESENSE_HOST`) and its API port (`TYPESENSE_PORT`). The tables below list only the extra labels.
 - **Omit, don't zero.** A value Typesense doesn't report (endpoint failed, field missing, older version, not a number) is left out, never exported as 0. Only `typesense_health` and `typesense_raft_state` are always present.
 - All metrics are gauges, except the two network byte counters.
+- The sections up to [Scrape health](#scrape-health) describe a Typesense node. The exporter's own metrics, from a separate endpoint, are in [Exporter metrics](#exporter-metrics).
 
 ## Health and cluster state
 
@@ -189,6 +190,47 @@ A numeric field Typesense reports that the exporter has no 1.0 name for (for exa
 ```promql
 # Fields this exporter version doesn't know yet
 count by (source, key) (typesense_unmapped)
+```
+
+## Exporter metrics
+
+The exporter's own health, served at **`GET /exporter/metrics`** (Prometheus text format), apart from every Typesense node's output. It is the same with `/metrics` and `/probe`, like the `/metrics` of `blackbox_exporter` itself, so scrape it as a separate job; see [Prometheus](configuration.md#prometheus).
+
+These series are not about a Typesense node, so none carries `host` or `port`, and none is affected by `--metric-names`. Counters and histograms live as long as the exporter process and add up over all scrapes and all targets; they restart from 0 when the exporter restarts (use `rate()` or `increase()`). Every label value comes from a fixed set, a Typesense path, or a cluster name in the config file: a refused or malformed `/probe` target is counted but never becomes a label value, so a caller can't grow the number of series.
+
+| Metric | Type | Extra labels | Meaning |
+|---|---|---|---|
+| `typesense_exporter_build_info` | gauge | `version` | Always `1`; `version` is the exporter's version |
+| `typesense_exporter_scrapes_total` | counter | `handler` (`metrics`, `probe`), `result` | Scrapes of `/metrics` and `/probe` by outcome. `result` is `ok` (HTTP 200, even when Typesense is down), `refused` (`/probe` 403: target not allowed), `invalid` (`/probe` 400: missing or malformed target), `not_found` (`/metrics` 404: no `--typesense-host`), `unavailable` (`/probe` 503: the exporter is shutting down) or `cancelled` (the caller hung up before the scrape finished, typically Prometheus at its `scrape_timeout`) |
+| `typesense_exporter_typesense_requests_total` | counter | `endpoint`, `result` | Requests to Typesense, summed over all targets. `endpoint` is one of `/metrics.json`, `/stats.json`, `/health`, `/debug`, `/status`, `/collections`; `result` is `ok`, `timeout` (hit `--typesense-timeout`), `error` (connection error, non-2xx status, unparsable body) or `cancelled` (the caller hung up while the request was in flight) |
+| `typesense_exporter_typesense_request_duration_seconds` | histogram | `endpoint` | How long those requests took, timeouts included |
+| `typesense_exporter_probes_in_flight` | gauge | | `/probe` scrapes running now (at most `--probe-max-concurrency`) |
+| `typesense_exporter_probes_waiting` | gauge | | `/probe` scrapes queued for a `--probe-max-concurrency` slot now. `probes_in_flight` stops at the limit, so this shows how many more are waiting |
+| `typesense_exporter_probe_slot_wait_seconds` | histogram | | Time a `/probe` waited for a `--probe-max-concurrency` slot before it could start; near 0 unless probes queue. A probe whose caller hung up while queued is observed too, with the time it waited, so saturation shows even when Prometheus gives up first |
+| `typesense_exporter_key_reloads_total` | counter | `key`, `result` (`ok`, `failed`) | Attempts to re-read an API key file after it changed. `ok` counts any successful re-read after the file's metadata changed (a `touch` or `chmod` too), not only a new key value |
+| `typesense_exporter_key_reload_failing` | gauge | `key` | `1` while the latest reload attempt of that key file failed (the previous key is still in use), else `0` |
+
+`key` is `default` for `--typesense-api-key-file` and the cluster's name for a cluster's `api_key_file`. Both key metrics exist only for keys read from a file: a key from a flag or environment variable never changes, so it has no series. The files are checked every few seconds and on use (at most once per second), so a rotated key that can't be read shows up in `key_reload_failing` even when nothing is scraped with that key. A failing file is retried until it works, so `failed` counts attempts, not rotations.
+
+Invalid requests are counted here but don't trigger `TypesenseExporterProbeRefused`: anyone who can reach the exporter can cause a 400.
+
+`typesense_exporter_scrapes_total` and the `*_requests_total` series start at 0 when the exporter starts, so `increase()` sees the first event. The histograms use the buckets 5ms to 30s for requests and 1ms to 30s for slot waits.
+
+```promql
+# Probes the exporter refused or rejected, per minute
+sum by (instance) (rate(typesense_exporter_scrapes_total{handler="probe",result=~"refused|invalid"}[5m])) * 60
+
+# Typesense requests that failed, by endpoint
+sum by (endpoint) (rate(typesense_exporter_typesense_requests_total{result!="ok"}[5m]))
+
+# p95 duration of /stats.json across all targets
+histogram_quantile(0.95, sum by (le) (rate(typesense_exporter_typesense_request_duration_seconds_bucket{endpoint="/stats.json"}[5m])))
+
+# p95 wait for a probe slot: raise --probe-max-concurrency if this stays above 1s
+histogram_quantile(0.95, sum by (le) (rate(typesense_exporter_probe_slot_wait_seconds_bucket[10m])))
+
+# Key files the exporter can't read after a rotation
+typesense_exporter_key_reload_failing == 1
 ```
 
 ## Choosing the names: `--metric-names`

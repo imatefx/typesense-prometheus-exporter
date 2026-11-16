@@ -34,3 +34,51 @@ groups:
         labels: { severity: warning }
         annotations:
           summary: "Exporter can't read {{ $labels.endpoint }} from Typesense {{ $labels.host }}:{{ $labels.port }}"
+
+  # Health of the exporter itself, from its /exporter/metrics endpoint (scrape
+  # job typesense-exporter-self in prometheus.yml).
+  - name: typesense-exporter
+    rules:
+      # The three alerts below read the exporter's own metrics, so they are
+      # silent when this job is down. If the job is not configured at all there
+      # is no `up` series and this alert can't fire either; check that
+      # up{job="typesense-exporter-self"} exists.
+      - alert: TypesenseExporterSelfMetricsDown
+        expr: up{job="typesense-exporter-self"} == 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Prometheus can't scrape the exporter's own metrics from {{ $labels.instance }}"
+          description: "The exporter alerts for key reloads, refused probes and probe saturation read /exporter/metrics and are silent while this job is down. An absent up{job=\"typesense-exporter-self\"} series means the job is not configured; see the typesense-exporter-self job in prometheus.yml."
+
+      # The exporter keeps using the previous key, so scrapes work until the
+      # old key is revoked, and then every one of them fails.
+      - alert: TypesenseExporterKeyReloadFailing
+        expr: max by (instance, key) (typesense_exporter_key_reload_failing) == 1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Exporter {{ $labels.instance }} can't read the rotated API key file for {{ $labels.key }}"
+          description: "The latest reload of the {{ $labels.key }} key file failed, so the exporter is still using the previous key. Fix the file (the exporter log says why) before the old key is revoked."
+
+      # for: 0m on purpose. increase() over 10m keeps the alert firing for 10m
+      # after the last refusal, and a single refused target is already worth a
+      # look, so there is nothing to wait for; `for: 5m` would only delay it.
+      # Only refused (403) targets alert. Invalid requests (400: a port scanner,
+      # /probe without a target) are counted but anyone who can reach the
+      # exporter can cause them, so they would make the alert noisy.
+      - alert: TypesenseExporterProbeRefused
+        expr: sum by (instance) (increase(typesense_exporter_scrapes_total{handler="probe",result="refused"}[10m])) > 0
+        for: 0m
+        labels: { severity: warning }
+        annotations:
+          summary: "Exporter {{ $labels.instance }} refused probes in the last 10m"
+          description: "Something is probing targets the exporter doesn't allow (403). Compare the Prometheus scrape config with --probe-allowed-targets and the config file's clusters, or find who else can reach the exporter."
+
+      - alert: TypesenseExporterProbesSaturated
+        expr: histogram_quantile(0.95, sum by (instance, le) (rate(typesense_exporter_probe_slot_wait_seconds_bucket[10m]))) > 1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Probes through exporter {{ $labels.instance }} wait over 1s for a slot (p95)"
+          description: "More probes arrive than --probe-max-concurrency allows at once, so scrapes queue and may time out. Raise --probe-max-concurrency."
