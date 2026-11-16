@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-16
+
 ### Added
 - **Log level and format** (#8). `--log-level` / `TYPESENSE_EXPORTER_LOG_LEVEL` / `log_level` takes `error`, `warn`, `info` (default), `debug` or `trace`; `--log-format` / `TYPESENSE_EXPORTER_LOG_FORMAT` / `log_format` takes `text` (default) or `json`. `RUST_LOG`, when set, takes precedence over the level and accepts full filter directives such as `typesense_prometheus_exporter=debug,reqwest=info`. Logging now starts after the options are loaded, so the level can come from the config file. See [Logging](docs/configuration.md#logging).
 - Text logs are coloured only on a terminal and never with `NO_COLOR` set, so `docker logs` and log collectors no longer get ANSI escape codes.
@@ -206,7 +208,8 @@ dashboards, a local stack and a full test suite. Metric names and labels from
 ### Added
 - First release: exports Typesense `/metrics.json` and `/stats.json` in Prometheus format.
 
-[Unreleased]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.4.1...v1.0.0
