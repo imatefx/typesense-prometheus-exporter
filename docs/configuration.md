@@ -30,7 +30,7 @@ api_key_file = "/run/secrets/typesense-prod"
 
 - **No inline secrets.** `typesense_api_key` and `api_key` are not accepted in the file; they are errors that say so. Name a file (`typesense_api_key_file`) or an environment variable (`typesense_api_key_env`) instead. `--typesense-api-key` and `TYPESENSE_API_KEY` keep working, and a key given by flag or environment replaces the file's key settings.
 - **Unknown keys are errors**, so a typo is never silently ignored. Invalid values are reported with the file and line. Errors never contain key values or the value that was rejected: a `*_env` setting that is not a valid environment variable name (`[A-Za-z_][A-Za-z0-9_]*`) is reported without echoing it, and type errors do not quote the offending value.
-- **Empty variables count as unset.** `TYPESENSE_HOST=`, `TYPESENSE_API_KEY=` and `TYPESENSE_PROBE_ALLOWED_TARGETS=` (what `${VAR:-}` in a compose file gives) fall back to the config file instead of overriding it.
+- **Empty variables count as unset.** Any option's environment variable that is empty or blank (what `${VAR:-}` in a compose file gives), such as `TYPESENSE_HOST=` or `TYPESENSE_PORT=`, is ignored: the config file's value, or else the built-in default, applies.
 - `typesense_protocol` (and a cluster's `protocol`) must be `http` or `https`, in any case.
 - Relative paths in the file (key files) are relative to the config file's directory, so the same file works from any working directory.
 - Requirements are checked after merging, so a file-only setup works: at least one of `typesense_host`, `probe_allowed_targets` or a `[clusters.*]` table, and a default key whenever `typesense_host` or `probe_allowed_targets` is used.

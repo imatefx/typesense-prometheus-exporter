@@ -8,7 +8,7 @@ use typesense_prometheus_exporter::cli::{CliArgs, MetricNames};
 
 static ENV: Mutex<()> = Mutex::new(());
 
-const VARS: [&str; 7] = [
+const VARS: [&str; 12] = [
     "TYPESENSE_PORT",
     "TYPESENSE_HOST",
     "TYPESENSE_API_KEY",
@@ -16,6 +16,11 @@ const VARS: [&str; 7] = [
     "TYPESENSE_METRIC_NAMES",
     "TYPESENSE_EXPORTER_CONFIG",
     "TYPESENSE_API_KEY_FILE",
+    "TYPESENSE_PROTOCOL",
+    "TYPESENSE_TIMEOUT",
+    "EXPORTER_BIND_ADDRESS",
+    "EXPORTER_BIND_PORT",
+    "TYPESENSE_PROBE_MAX_CONCURRENCY",
 ];
 
 /// Run `test` with a clean environment and a config file holding `toml`.
@@ -135,5 +140,41 @@ fn list_and_enum_options_follow_the_same_precedence() {
             MetricNames::V1,
             "flag beats the environment"
         );
+    });
+}
+
+#[test]
+fn every_blank_environment_variable_counts_as_unset() {
+    let key = key_file("blank-env-key", "file-key\n");
+    let toml = format!(
+        "typesense_host = \"filehost\"\ntypesense_port = 1111\ntypesense_protocol = \"https\"\n\
+         typesense_timeout = 7\nexporter_bind_address = \"127.0.0.1\"\nexporter_bind_port = 9999\n\
+         metric_names = \"both\"\nprobe_max_concurrency = 3\ntypesense_api_key_file = {key}\n"
+    );
+    with_file("blank", &toml, |config| {
+        // Compose's `VAR: ${VAR:-}` sets every variable, most of them empty.
+        for v in VARS {
+            if v != "TYPESENSE_EXPORTER_CONFIG" {
+                std::env::set_var(v, " ");
+            }
+        }
+        let args = CliArgs::load_from(["exporter", config]).expect("blank variables are ignored");
+        assert_eq!(args.typesense_host.as_deref(), Some("filehost"));
+        assert_eq!(args.typesense_port, 1111);
+        assert_eq!(args.typesense_protocol, "https");
+        assert_eq!(args.typesense_timeout, 7);
+        assert_eq!(args.exporter_bind_address, "127.0.0.1");
+        assert_eq!(args.exporter_bind_port, 9999);
+        assert_eq!(args.metric_names, MetricNames::Both);
+        assert_eq!(args.probe_max_concurrency, 3);
+        assert_eq!(args.api_key().unwrap(), "file-key");
+
+        // Without a file, blank variables give the built-in defaults.
+        std::env::set_var("TYPESENSE_HOST", "h");
+        std::env::set_var("TYPESENSE_API_KEY", "k");
+        let args = CliArgs::load_from(["exporter"]).expect("defaults");
+        assert_eq!(args.typesense_port, 8108);
+        assert_eq!(args.metric_names, MetricNames::V1);
+        assert_eq!(args.probe_max_concurrency, 16);
     });
 }

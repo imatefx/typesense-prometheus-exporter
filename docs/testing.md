@@ -5,7 +5,7 @@ Three layers, from fast and isolated to slow and real:
 | Layer | Where | Runs against | Count | Time | Needs |
 |---|---|---|---|---|---|
 | Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 88 | < 1s | Rust |
-| Integration | [`tests/exporter.rs`](../tests/exporter.rs), [`tests/config_env.rs`](../tests/config_env.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 56 | ~1s | Rust |
+| Integration | [`tests/exporter.rs`](../tests/exporter.rs), [`tests/config_env.rs`](../tests/config_env.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 57 | ~1s | Rust |
 | End-to-end | [`tests/e2e.rs`](../tests/e2e.rs) | A real 3-node Typesense cluster, one exporter, Prometheus and Grafana in Docker | 9 | ~3–5 min | Rust, Docker |
 
 ```bash
@@ -215,6 +215,7 @@ The exporter runs with the default `--metric-names=v1` unless a test says otherw
 | `router_needs_the_default_key_for_a_host_or_allow_list` | Clusters plus `--typesense-host` or an allow list but no default key | `server::router` returns an error; clusters alone are fine |
 | `router_rejects_an_ipv6_host_spelled_differently_from_a_cluster_node` | `--typesense-host=0:0::1` and a cluster node `[::1]` | Startup error: one node, one key |
 | `router_rejects_an_empty_host_and_ignores_an_empty_key` | Empty `--typesense-host`; empty API key | `server::router` returns an error for each |
+| `every_blank_environment_variable_counts_as_unset` (`tests/config_env.rs`) | Every option's variable set to a blank value | The file's value for every option; without a file, the built-in defaults |
 | `empty_environment_variables_fall_back_to_the_file` (`tests/config_env.rs`) | Empty `TYPESENSE_HOST`, `TYPESENSE_PROBE_ALLOWED_TARGETS` and `TYPESENSE_API_KEY` | The file's host, list and key are used |
 | `an_environment_key_beats_the_files_key_settings` (`tests/config_env.rs`) | `TYPESENSE_API_KEY` with a file `typesense_api_key_file` or `_env` | The environment key is used |
 | `list_and_enum_options_follow_the_same_precedence` (`tests/config_env.rs`) | `TYPESENSE_PROBE_ALLOWED_TARGETS` and `TYPESENSE_METRIC_NAMES` against the file and flags | Flag > environment > file |

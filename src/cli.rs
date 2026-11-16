@@ -126,7 +126,23 @@ impl CliArgs {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        let matches = Self::command().try_get_matches_from(args)?;
+        // An empty or blank environment variable (Compose's `${VAR:-}`) counts
+        // as unset for every option, so the file or the default applies
+        // instead of a parse error or an empty value.
+        let mut command = Self::command();
+        let blank: Vec<String> = command
+            .get_arguments()
+            .filter(|arg| {
+                arg.get_env()
+                    .and_then(std::env::var_os)
+                    .is_some_and(|v| v.to_string_lossy().trim().is_empty())
+            })
+            .map(|arg| arg.get_id().to_string())
+            .collect();
+        for id in blank {
+            command = command.mut_arg(id, |arg| arg.env(None::<&str>));
+        }
+        let matches = command.try_get_matches_from(args)?;
         let mut args = Self::from_arg_matches(&matches)?;
         config::merge(&mut args, &matches, |name| std::env::var(name).ok()).map_err(|msg| {
             clap::Error::raw(clap::error::ErrorKind::ValueValidation, format!("{msg}\n"))
