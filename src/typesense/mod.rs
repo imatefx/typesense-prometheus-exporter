@@ -17,7 +17,9 @@ pub struct TypesenseClient {
 }
 
 impl TypesenseClient {
-    /// `http` is shared by every client so connections are pooled across targets.
+    /// `http` is shared by every client so connections are pooled across
+    /// targets. A client is made per scrape with the key resolved once, so a
+    /// scrape's requests never mix an old and a new key during a rotation.
     pub fn new(http: Client, base_url: String, api_key: String) -> Self {
         Self {
             http,

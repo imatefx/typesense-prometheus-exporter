@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: typesense-exporter
+  labels:
+    app.kubernetes.io/name: typesense-exporter
+spec:
+  selector:
+    app.kubernetes.io/name: typesense-exporter
+  ports:
+    - name: http
+      port: 8888
+      targetPort: http

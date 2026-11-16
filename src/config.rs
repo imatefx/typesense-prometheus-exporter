@@ -348,7 +348,11 @@ mod tests {
         assert_eq!(a.probe_max_concurrency, 3);
         let prod = &a.clusters.clusters[0];
         assert_eq!(
-            (prod.name.as_str(), prod.api_key(), prod.protocol.as_str()),
+            (
+                prod.name.as_str(),
+                prod.api_key().as_str(),
+                prod.protocol.as_str()
+            ),
             ("prod", "pk", "https")
         );
         assert_eq!(

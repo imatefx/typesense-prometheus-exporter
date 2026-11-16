@@ -6,7 +6,7 @@ use std::{
 use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
 use serde::Deserialize;
 
-use crate::{config, probe_config::ProbeConfig, target};
+use crate::{config, key::KeySource, probe_config::ProbeConfig, target};
 
 /// Which metric names the exporter emits. See `docs/metrics-v1.md`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum, Deserialize)]
@@ -160,6 +160,15 @@ impl CliArgs {
         }
     }
 
+    /// Like [`Self::api_key`], but a key file is followed when it changes.
+    pub fn key_source(&self) -> std::io::Result<KeySource> {
+        match (&self.typesense_api_key, &self.typesense_api_key_file) {
+            (Some(key), _) if !key.trim().is_empty() => Ok(KeySource::fixed(key.clone())),
+            (_, Some(path)) if !path.as_os_str().is_empty() => KeySource::file(path),
+            _ => Err(std::io::Error::other("no Typesense API key configured")),
+        }
+    }
+
     /// Whether a non-empty key or key file is configured.
     pub fn has_key(&self) -> bool {
         self.typesense_api_key
@@ -191,12 +200,20 @@ impl CliArgs {
     }
 }
 
-/// Read an API key file: surrounding whitespace is ignored, empty is an error.
+/// Read an API key file: surrounding whitespace is ignored; empty or not
+/// usable as an HTTP header value (a byte order mark, control characters,
+/// non-ASCII) is an error. Never includes the key in the error.
 pub fn read_key_file(path: &Path) -> std::io::Result<String> {
     let key = std::fs::read_to_string(path)?.trim().to_string();
     if key.is_empty() {
         return Err(std::io::Error::other(format!(
             "API key file {} is empty",
+            path.display()
+        )));
+    }
+    if !key.is_ascii() || reqwest::header::HeaderValue::from_str(&key).is_err() {
+        return Err(std::io::Error::other(format!(
+            "API key file {} has characters that are not valid in an HTTP header (a byte order mark, control or non-ASCII characters?)",
             path.display()
         )));
     }

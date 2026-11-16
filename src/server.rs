@@ -15,6 +15,7 @@ use tokio::signal;
 
 use crate::{
     cli::{CliArgs, MetricNames},
+    key::KeySource,
     prometheus_exp::{self, Scrape},
     target::{is_loopback, normalize_host, AllowList, Target},
     typesense::TypesenseClient,
@@ -22,7 +23,8 @@ use crate::{
 
 /// The node `--typesense-host` names, served at `/metrics`.
 struct Node {
-    client: TypesenseClient,
+    base_url: String,
+    key: KeySource,
     host: String,
     port: u16,
 }
@@ -32,7 +34,7 @@ struct AppState {
     http: reqwest::Client,
     /// For `--typesense-host` and `--probe-allowed-targets`; none when only
     /// the config file's clusters are used.
-    api_key: Option<String>,
+    api_key: Option<KeySource>,
     node: Option<Node>,
     allowed: AllowList,
     /// Clusters with their own key; checked before `allowed`.
@@ -57,7 +59,7 @@ pub fn router(args: &CliArgs) -> std::io::Result<Router> {
     {
         return Err(std::io::Error::other("--typesense-host must not be empty"));
     }
-    let api_key = args.has_key().then(|| args.api_key()).transpose()?;
+    let api_key = args.has_key().then(|| args.key_source()).transpose()?;
     // Never follow redirects: reqwest would resend the API key header to
     // wherever a node (or something impersonating it) redirects.
     let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
@@ -123,14 +125,11 @@ pub fn router(args: &CliArgs) -> std::io::Result<Router> {
         .map(|(host, key)| {
             allowed.allow(host, args.typesense_port);
             Node {
-                client: TypesenseClient::new(
-                    http.clone(),
-                    format!(
-                        "{}://{}:{}",
-                        args.typesense_protocol, host, args.typesense_port
-                    ),
-                    key.clone(),
+                base_url: format!(
+                    "{}://{}:{}",
+                    args.typesense_protocol, host, args.typesense_port
                 ),
+                key: key.clone(),
                 host: host.clone(),
                 port: args.typesense_port,
             }
@@ -227,7 +226,17 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> (StatusCode, Str
     match &state.node {
         Some(node) => (
             StatusCode::OK,
-            scrape(&node.client, &node.host, node.port, state.metric_names).await,
+            scrape(
+                &TypesenseClient::new(
+                    state.http.clone(),
+                    node.base_url.clone(),
+                    node.key.current(),
+                ),
+                &node.host,
+                node.port,
+                state.metric_names,
+            )
+            .await,
         ),
         None => (
             StatusCode::NOT_FOUND,
@@ -274,7 +283,7 @@ async fn probe_handler(
             if let Ok(t) = Target::parse(&raw, &cluster.protocol, state.default_port) {
                 target = t;
             }
-            (cluster.api_key().to_string(), cluster.protocol.as_str())
+            (cluster.key_source().clone(), cluster.protocol.as_str())
         }
         (None, Some(key)) if state.allowed.allows(&target) => {
             (key.clone(), state.default_scheme.as_str())
@@ -327,7 +336,7 @@ async fn probe_handler(
             "exporter shutting down\n".to_string(),
         );
     };
-    let client = TypesenseClient::new(state.http.clone(), target.base_url(), api_key);
+    let client = TypesenseClient::new(state.http.clone(), target.base_url(), api_key.current());
     (
         StatusCode::OK,
         scrape(&client, &target.host, target.port, state.metric_names).await,
