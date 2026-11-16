@@ -89,6 +89,8 @@ scrape_configs:
         replacement: exporter.internal:8888
 ```
 
+**Several clusters with different keys.** Put everything in one TOML file, with a `[clusters.<name>]` per cluster (`targets`, `api_key_file` or `api_key_env`, optional `protocol`), and start with `typesense-prometheus-exporter --config exporter.toml`. `/probe` uses a cluster's key only for that cluster's nodes. See [the config file](docs/configuration.md#config-file), [several clusters](docs/configuration.md#several-clusters-with-different-keys) and [deploy/exporter.example.toml](deploy/exporter.example.toml).
+
 The exporter only probes the listed nodes, because it sends its API key to every node it scrapes. See [configuration](docs/configuration.md#probing-several-nodes-from-one-exporter).
 
 Then add the exporter(s) to Prometheus, and import the [dashboards](grafana/) and [alert rules](deploy/prometheus/alerts.yml). The [getting started guide](docs/getting-started.md) walks through it.
@@ -97,7 +99,7 @@ Then add the exporter(s) to Prometheus, and import the [dashboards](grafana/) an
 
 | Flag | Environment variable | Default |
 |---|---|---|
-| `--typesense-host` | `TYPESENSE_HOST` | *(required unless `--probe-allowed-targets` is set)* |
+| `--typesense-host` | `TYPESENSE_HOST` | *(required unless `--probe-allowed-targets` or config clusters are set)* |
 | `--typesense-api-key` / `--typesense-api-key-file` | `TYPESENSE_API_KEY` / `TYPESENSE_API_KEY_FILE` | *(one is required)* |
 | `--typesense-port` | `TYPESENSE_PORT` | `8108` |
 | `--typesense-protocol` | `TYPESENSE_PROTOCOL` | `http` |
@@ -179,7 +181,7 @@ make up / down    # start / stop the Docker Compose stack
 ./build-cross.sh  # static linux/amd64 + linux/arm64 binaries
 ```
 
-There are 117 tests in three layers. **Unit** and **integration** tests run against a mock Typesense. **End-to-end** tests run against a real cluster and break it on purpose: leader failover, a hung node, quorum loss. See [testing](docs/testing.md) for the full list.
+There are 143 tests in three layers. **Unit** and **integration** tests run against a mock Typesense. **End-to-end** tests run against a real cluster and break it on purpose: leader failover, a hung node, quorum loss. See [testing](docs/testing.md) for the full list.
 
 ## Contributors
 

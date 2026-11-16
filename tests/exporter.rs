@@ -30,6 +30,8 @@ fn args_for(host: &str, port: u16, timeout: u64) -> CliArgs {
         typesense_timeout: timeout,
         metric_names: MetricNames::default(),
         probe_allowed_targets: Vec::new(),
+        config: None,
+        clusters: Default::default(),
         probe_max_concurrency: 16,
     }
 }
@@ -1142,4 +1144,305 @@ fn router_needs_a_host_or_a_non_empty_allow_list() {
     args.probe_allowed_targets = vec![String::new()];
 
     assert!(server::router(&args).is_err());
+}
+
+// ---- /probe with config-file clusters ---------------------------------------------
+
+/// A healthy node that only answers requests carrying `key`.
+async fn node_with_key(key: &str) -> MockServer {
+    let mock = MockServer::start().await;
+    let routes = [
+        ("/metrics.json", json_body(METRICS)),
+        ("/stats.json", json_body(STATS)),
+        (
+            "/health",
+            ResponseTemplate::new(200).set_body_json(json!({"ok": true})),
+        ),
+        (
+            "/debug",
+            ResponseTemplate::new(200).set_body_json(json!({"state": 1, "version": "30.1"})),
+        ),
+        (
+            "/status",
+            ResponseTemplate::new(200).set_body_json(
+                json!({"committed_index": 1, "queued_writes": 0, "state": "LEADER"}),
+            ),
+        ),
+        ("/collections", json_body(COLLECTIONS)),
+    ];
+    for (route, response) in routes {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .and(header("x-typesense-api-key", key))
+            .respond_with(response)
+            .mount(&mock)
+            .await;
+    }
+    mock
+}
+
+/// Write `contents` to a fresh file under the temp dir and return its path.
+fn temp_file(name: &str, contents: &str) -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static N: AtomicU32 = AtomicU32::new(0);
+    let path = std::env::temp_dir().join(format!(
+        "ts-exporter-test-{}-{}-{name}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::write(&path, contents).unwrap();
+    path
+}
+
+/// A probe config with one cluster per `(name, key, protocol, nodes)`.
+fn probe_config(clusters: &[(&str, &str, &str, &[String])]) -> std::path::PathBuf {
+    let mut toml = String::new();
+    for (name, key, protocol, nodes) in clusters {
+        let key_file = temp_file(&format!("{name}-key"), &format!("{key}\n"));
+        let targets: Vec<String> = nodes.iter().map(|n| format!("{n:?}")).collect();
+        toml.push_str(&format!(
+            "[clusters.{name}]\ntargets = [{}]\napi_key_file = {:?}\nprotocol = {protocol:?}\n",
+            targets.join(", "),
+            key_file.display().to_string()
+        ));
+    }
+    temp_file("probe.toml", &toml)
+}
+
+/// Load the config file the way `main` does, as a try.
+fn load_config(config: &std::path::Path) -> Result<CliArgs, String> {
+    CliArgs::load_from([
+        "exporter".to_string(),
+        format!("--config={}", config.display()),
+    ])
+    .map_err(|e| e.to_string())
+}
+
+/// An exporter with only a config file: no host, no default key.
+fn config_only_args(config: std::path::PathBuf) -> CliArgs {
+    load_config(&config).expect("config")
+}
+
+fn received_keys(requests: &[wiremock::Request]) -> Vec<String> {
+    requests
+        .iter()
+        .map(|r| {
+            r.headers
+                .get("x-typesense-api-key")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn each_cluster_is_probed_with_only_its_own_key() {
+    let prod = node_with_key("prod-secret").await;
+    let staging = node_with_key("staging-secret").await;
+    let config = probe_config(&[
+        ("prod", "prod-secret", "http", &[node_addr(&prod)]),
+        ("staging", "staging-secret", "http", &[node_addr(&staging)]),
+    ]);
+    let base = spawn_exporter(config_only_args(config)).await;
+
+    let (status_p, out_p) = probe(&base, &node_addr(&prod)).await;
+    let (status_s, out_s) = probe(&base, &node_addr(&staging)).await;
+
+    assert_eq!((status_p, status_s), (200, 200));
+    assert_eq!(health(&out_p), Some(1.0), "{out_p}");
+    assert_eq!(health(&out_s), Some(1.0), "{out_s}");
+    assert!(out_p.contains(&format!("port=\"{}\"", prod.address().port())));
+    for (mock, own, other) in [
+        (&prod, "prod-secret", "staging-secret"),
+        (&staging, "staging-secret", "prod-secret"),
+    ] {
+        let keys = received_keys(&mock.received_requests().await.unwrap());
+        assert_eq!(keys.len(), 6);
+        assert!(keys.iter().all(|k| k == own), "{keys:?}");
+        assert!(!keys.iter().any(|k| k == other));
+    }
+}
+
+#[tokio::test]
+async fn a_node_in_no_cluster_is_refused_without_a_request() {
+    let known = node_with_key("k").await;
+    let stranger = node_with_key("k").await;
+    let config = probe_config(&[("prod", "k", "http", &[node_addr(&known)])]);
+    let base = spawn_exporter(config_only_args(config)).await;
+
+    let (status, body) = probe(&base, &node_addr(&stranger)).await;
+
+    assert_eq!(status, 403, "{body}");
+    assert!(body.contains("not allowed"), "{body}");
+    assert!(stranger.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_cluster_with_https_refuses_http_targets() {
+    let node = node_with_key("k").await;
+    let config = probe_config(&[("prod", "k", "https", &[node_addr(&node)])]);
+    let base = spawn_exporter(config_only_args(config)).await;
+
+    let (status, body) = probe(&base, &format!("http://{}", node_addr(&node))).await;
+
+    assert_eq!(status, 403, "{body}");
+    assert!(body.contains("must be https"), "{body}");
+    assert!(node.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_cluster_protocol_overrides_the_default_for_bare_targets() {
+    // Default protocol https would refuse http://; the cluster says http.
+    let node = node_with_key("k").await;
+    let config = probe_config(&[("dev", "k", "http", &[node_addr(&node)])]);
+    let mut args = config_only_args(config);
+    args.typesense_protocol = "https".into();
+    let base = spawn_exporter(args).await;
+
+    let (status, out) = probe(&base, &node_addr(&node)).await;
+
+    assert_eq!(status, 200);
+    assert_eq!(health(&out), Some(1.0), "{out}");
+}
+
+#[tokio::test]
+async fn probe_config_works_alongside_the_default_key_and_host() {
+    let host = node_with_key("default-key").await;
+    let cluster = node_with_key("cluster-key").await;
+    let config = probe_config(&[("prod", "cluster-key", "http", &[node_addr(&cluster)])]);
+    let addr = host.address();
+    let mut args = config_only_args(config);
+    args.typesense_host = Some(addr.ip().to_string());
+    args.typesense_port = addr.port();
+    args.typesense_api_key = Some("default-key".into());
+    args.probe_allowed_targets = vec!["*".into()];
+    let base = spawn_exporter(args).await;
+
+    let (_, metrics) = scrape(&base).await;
+    let (_, from_cluster) = probe(&base, &node_addr(&cluster)).await;
+    let (_, from_host) = probe(&base, &node_addr(&host)).await;
+
+    assert_eq!(health(&metrics), Some(1.0), "/metrics uses the default key");
+    assert_eq!(
+        health(&from_cluster),
+        Some(1.0),
+        "* does not override a cluster key"
+    );
+    assert_eq!(health(&from_host), Some(1.0));
+    for (mock, key) in [(&host, "default-key"), (&cluster, "cluster-key")] {
+        let keys = received_keys(&mock.received_requests().await.unwrap());
+        assert!(
+            !keys.is_empty() && keys.iter().all(|k| k == key),
+            "{keys:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn probe_config_alone_leaves_metrics_404() {
+    let node = node_with_key("k").await;
+    let config = probe_config(&[("prod", "k", "http", &[node_addr(&node)])]);
+    let base = spawn_exporter(config_only_args(config)).await;
+
+    let (status, body) = scrape(&base).await;
+
+    assert_eq!(status, 404);
+    assert!(body.contains("/probe?target="), "{body}");
+}
+
+#[test]
+fn router_rejects_a_node_that_has_two_keys() {
+    let node = "dup.example:8108".to_string();
+    let config = probe_config(&[("prod", "k", "http", std::slice::from_ref(&node))]);
+
+    let mut allow = config_only_args(config.clone());
+    allow.typesense_api_key = Some("default".into());
+    allow.probe_allowed_targets = vec![node.clone()];
+    let err = server::router(&allow).unwrap_err().to_string();
+    assert!(
+        err.contains("dup.example:8108")
+            && err.contains("prod")
+            && err.contains("--probe-allowed-targets"),
+        "{err}"
+    );
+
+    let mut host = config_only_args(config);
+    host.typesense_api_key = Some("default".into());
+    host.typesense_host = Some("DUP.example".into());
+    host.typesense_port = 8108;
+    let err = server::router(&host).unwrap_err().to_string();
+    assert!(
+        err.contains("--typesense-host") && err.contains("prod"),
+        "{err}"
+    );
+}
+
+#[test]
+fn bad_config_files_are_reported_without_leaking_keys() {
+    let err = load_config(std::path::Path::new("/nonexistent/probe.toml")).unwrap_err();
+    assert!(err.contains("/nonexistent/probe.toml"), "{err}");
+
+    let inline = temp_file(
+        "inline.toml",
+        "[clusters.p]\ntargets = [\"a\"]\napi_key = \"inline-secret\"\n",
+    );
+    let err = load_config(&inline).unwrap_err();
+    assert!(
+        err.contains("api_key") && !err.contains("inline-secret"),
+        "{err}"
+    );
+
+    let no_key_file = temp_file(
+        "nokey.toml",
+        "[clusters.p]\ntargets = [\"a\"]\napi_key_file = \"/nonexistent/key\"\n",
+    );
+    let err = load_config(&no_key_file).unwrap_err();
+    assert!(
+        err.contains("\"p\"") && err.contains("/nonexistent/key"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn the_exporter_starts_from_a_config_file_alone() {
+    let node = healthy_node(1).await;
+    let key = temp_file("default-key", "test-key\n");
+    let addr = node.address();
+    let config = temp_file(
+        "exporter.toml",
+        &format!(
+            "typesense_host = \"{}\"\ntypesense_port = {}\ntypesense_api_key_file = {:?}\ntypesense_timeout = 3\nexporter_bind_address = \"127.0.0.1\"\n",
+            addr.ip(),
+            addr.port(),
+            key.display().to_string()
+        ),
+    );
+    let args = load_config(&config).unwrap();
+    assert_eq!(args.typesense_timeout, 3);
+    let base = spawn_exporter(args).await;
+
+    let (status, out) = scrape(&base).await;
+
+    assert_eq!(status, 200);
+    assert_eq!(health(&out), Some(1.0), "{out}");
+}
+
+#[test]
+fn router_needs_the_default_key_for_a_host_or_allow_list() {
+    let config = probe_config(&[("prod", "k", "http", &["a.example".to_string()])]);
+
+    let mut host = config_only_args(config.clone());
+    host.typesense_host = Some("ts".into());
+    assert!(server::router(&host)
+        .unwrap_err()
+        .to_string()
+        .contains("--typesense-api-key"));
+
+    let mut allow = config_only_args(config.clone());
+    allow.probe_allowed_targets = vec!["b.example".into()];
+    assert!(server::router(&allow).is_err());
+
+    assert!(server::router(&config_only_args(config)).is_ok());
 }

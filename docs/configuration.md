@@ -1,13 +1,51 @@
 # Configuration
 
+## Config file
+
+Every option can also be set in a TOML file, so the exporter can start with just:
+
+```bash
+typesense-prometheus-exporter --config exporter.toml    # or TYPESENSE_EXPORTER_CONFIG=exporter.toml
+```
+
+The keys are the option names in snake_case. **Precedence: command-line flag, then environment variable, then config file, then the built-in default.** A flag or variable always wins over the file, so one file can be shared and overridden per deployment.
+
+```toml
+# deploy/exporter.example.toml lists every key; all are optional.
+typesense_host = "localhost"          # node served at /metrics
+typesense_port = 8108                 # default 8108
+typesense_protocol = "http"           # default "http"
+typesense_timeout = 5                 # default 5 (seconds, 0 disables)
+typesense_api_key_file = "/run/secrets/typesense-api-key"   # or typesense_api_key_env
+exporter_bind_address = "0.0.0.0"     # default "0.0.0.0"
+exporter_bind_port = 8888             # default 8888
+metric_names = "v1"                   # default "v1"; "both" or "legacy"
+probe_allowed_targets = ["ts-1", "ts-2:8108"]   # default empty
+probe_max_concurrency = 16            # default 16
+
+[clusters.prod]                       # see "Several clusters with different keys"
+targets = ["ts-prod-1:8108"]
+api_key_file = "/run/secrets/typesense-prod"
+```
+
+- **No inline secrets.** `typesense_api_key` and `api_key` are not accepted in the file; they are errors that say so. Name a file (`typesense_api_key_file`) or an environment variable (`typesense_api_key_env`) instead. `--typesense-api-key` and `TYPESENSE_API_KEY` keep working, and a key given by flag or environment replaces the file's key settings.
+- **Unknown keys are errors**, so a typo is never silently ignored. Invalid values are reported with the file, line and key. Errors never contain key values.
+- Relative paths in the file (key files) are relative to the exporter's working directory.
+- Requirements are checked after merging, so a file-only setup works: at least one of `typesense_host`, `probe_allowed_targets` or a `[clusters.*]` table, and a default key whenever `typesense_host` or `probe_allowed_targets` is used.
+- The file is read once at startup.
+
 ## Exporter options
 
-Every option can be set as a command-line flag or as an environment variable. The flag wins if both are set.
+Every option can be set as a command-line flag, an environment variable or a [config file](#config-file) key (flag first).
 
 | Flag | Environment variable | Default | Description |
 |---|---|---|---|
-| `--typesense-host` | `TYPESENSE_HOST` | *(see description)* | Hostname or IP of the Typesense node served at `/metrics`. Also used as the `host` label on every metric. Optional when `--probe-allowed-targets` is set; one of the two is required. Without it, `/metrics` answers 404 and you scrape nodes through `/probe`. |
-| `--typesense-api-key` | `TYPESENSE_API_KEY` | *(one of the two is required)* | API key sent as `X-TYPESENSE-API-KEY`. Never printed: hidden in `--help` and redacted in debug output. See [API key permissions](#api-key-permissions). |
+| `--config` | `TYPESENSE_EXPORTER_CONFIG` | | Path to the [config file](#config-file). |
+
+| Flag | Environment variable | Default | Description |
+|---|---|---|---|
+| `--typesense-host` | `TYPESENSE_HOST` | *(see description)* | Hostname or IP of the Typesense node served at `/metrics`. Also used as the `host` label on every metric. Optional when `--probe-allowed-targets` or config-file clusters are set; one of the three is required. Without it, `/metrics` answers 404 and you scrape nodes through `/probe`. |
+| `--typesense-api-key` | `TYPESENSE_API_KEY` | *(see description)* | Default API key, required with `--typesense-host` or `--probe-allowed-targets` (as this or the file option); clusters in the config file bring their own. Sent as `X-TYPESENSE-API-KEY`. Never printed: hidden in `--help` and redacted in debug output. See [API key permissions](#api-key-permissions). |
 | `--typesense-api-key-file` | `TYPESENSE_API_KEY_FILE` | | File holding the API key, e.g. a Docker or Kubernetes secret; surrounding whitespace is ignored. Preferred over the flag, which other users can see in the process list. |
 | `--typesense-port` | `TYPESENSE_PORT` | `8108` | Typesense API port. Also the `port` label. It is also the default port for `/probe` targets and `--probe-allowed-targets` entries that don't name one. |
 | `--typesense-protocol` | `TYPESENSE_PROTOCOL` | `http` | `http` or `https`. HTTPS uses rustls with the bundled CA certificates. Also the default scheme for `/probe` targets that don't name one. |
@@ -48,7 +86,7 @@ Any other value is rejected at startup. Health, raft, version, collection and sc
 
 A target is one of `host`, `host:port`, `http://host[:port]`, `https://host[:port]` or an IPv6 address in brackets such as `[::1]:8108`. The port defaults to `--typesense-port` and the scheme to `--typesense-protocol`, so one setting covers `/metrics` and `/probe`. Hosts are lowercased. Anything with a path, query, fragment, credentials or another scheme is rejected with 400.
 
-The same `--typesense-api-key` is used for every node.
+The same `--typesense-api-key` is used for every node, unless the node belongs to a [cluster with its own key](#several-clusters-with-different-keys).
 
 ### Security: the allow list
 
@@ -57,7 +95,7 @@ The exporter sends its API key to whatever node it scrapes. An open `/probe` wou
 - `--typesense-host:--typesense-port` is always allowed.
 - `--probe-allowed-targets` adds more, as comma-separated `host[:port]` entries, for example `typesense-1,typesense-2:9000,[::1]`. Matching is on the lowercase host and the port. The scheme is not part of the match.
 - A single `*` allows any target. The exporter logs a warning at startup. Use it only when the exporter is reachable by Prometheus alone.
-- With neither `--typesense-host` nor `--probe-allowed-targets`, the exporter refuses to start.
+- With none of `--typesense-host`, `--probe-allowed-targets` and config-file clusters, the exporter refuses to start.
 
 Bind the exporter to a private interface or network as well, and use `https`.
 
@@ -68,6 +106,47 @@ Bind the exporter to a private interface or network as well, and use `https`.
 **Proxies.** Like most HTTP clients, the exporter honours `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY`. Over `http` a proxy sees the API key; over `https` it only sees the host name. If your platform injects a proxy, add the Typesense nodes to `NO_PROXY` or use https.
 
 **Redirects are never followed.** A redirect from a node (or from something answering in its place) counts as a failed scrape, so the API key is never sent on to another host.
+
+## Several clusters with different keys
+
+One exporter can watch several Typesense clusters that have different API keys. Define each cluster in the [config file](#config-file):
+
+```toml
+[clusters.prod]
+targets = ["ts-prod-1:8108", "ts-prod-2:8108", "ts-prod-3:8108"]
+api_key_file = "/run/secrets/typesense-prod"
+protocol = "https"            # optional; defaults to typesense_protocol
+
+[clusters.staging]
+targets = ["ts-staging-1:8108"]
+api_key_env = "TYPESENSE_STAGING_KEY"
+```
+
+`/probe?target=ts-prod-1:8108` finds the cluster that lists the node and scrapes it with that cluster's key and protocol. There is no extra query parameter: the cluster follows from the target, so **a key can only ever be sent to its own cluster's nodes**.
+
+- **Key source.** Exactly one of `api_key_file` (trimmed, must not be empty) or `api_key_env` (the variable must be set and not empty) per cluster. An inline `api_key` is rejected.
+- **Names and targets.** Cluster names match `[A-Za-z0-9_-]+`. Targets are `host[:port]`, parsed like `--probe-allowed-targets` (the port defaults to `typesense_port`). Cluster targets are allowed implicitly; they need no entry in `probe_allowed_targets`.
+- **One home per node.** A `host:port` listed in two clusters, or in a cluster and in `probe_allowed_targets`, or equal to `typesense_host:typesense_port`, is a startup error naming both places.
+- **Lookup order.** Cluster targets first, always with their cluster's key. Then `probe_allowed_targets` and `typesense_host` with the default key. A `*` in `probe_allowed_targets` applies the default key only to nodes that are in no cluster. The default key is optional when only clusters are configured.
+- **https per cluster.** A cluster with `protocol = "https"` refuses `http://` targets with a 403. At startup the exporter warns about clusters with `protocol = "http"` and non-local targets, and the first probe of each such node warns again.
+- **Startup.** All keys are read once at startup. A key file or variable that can't be read, or an invalid file, stops the exporter with an error naming the file and cluster, never the key.
+
+The metrics are unchanged: they carry `host` and `port` labels only. To tell clusters apart in Prometheus, add a `cluster` label to the scrape targets:
+
+```yaml
+scrape_configs:
+  - job_name: typesense-prod
+    metrics_path: /probe
+    static_configs:
+      - targets: [ts-prod-1:8108, ts-prod-2:8108, ts-prod-3:8108]
+        labels: {cluster: prod}
+  - job_name: typesense-staging
+    metrics_path: /probe
+    static_configs:
+      - targets: [ts-staging-1:8108]
+        labels: {cluster: staging}
+    # Both jobs use the same relabel_configs as in "Probing several nodes".
+```
 
 ## API key permissions
 

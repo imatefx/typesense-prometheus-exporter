@@ -1,11 +1,16 @@
-use std::{fmt, path::PathBuf};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+};
 
-use clap::{Parser, ValueEnum};
+use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
+use serde::Deserialize;
 
-use crate::target;
+use crate::{config, probe_config::ProbeConfig, target};
 
 /// Which metric names the exporter emits. See `docs/metrics-v1.md`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum MetricNames {
     /// The 1.0 names only.
     #[default]
@@ -32,23 +37,31 @@ impl MetricNames {
 #[derive(Parser, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct CliArgs {
-    /// Typesense host served at /metrics. Optional when
-    /// --probe-allowed-targets is set; /probe?target=... then scrapes any
-    /// allowed node.
-    #[arg(long, env, required_unless_present = "probe_allowed_targets")]
+    /// TOML file that can set any option below (snake_case keys) and define
+    /// `[clusters.<name>]` with their own API keys. Precedence: flag, then
+    /// environment variable, then file, then default. See
+    /// deploy/exporter.example.toml.
+    #[arg(long, env = "TYPESENSE_EXPORTER_CONFIG")]
+    pub config: Option<PathBuf>,
+
+    /// Typesense host served at /metrics. At least one of this,
+    /// --probe-allowed-targets or config clusters is required; /probe?target=...
+    /// then scrapes any allowed node.
+    #[arg(long, env)]
     pub typesense_host: Option<String>,
 
     /// Typesense protocol
     #[arg(long, env, default_value_t= String::from("http"))]
     pub typesense_protocol: String,
 
-    /// Typesense API key. Prefer --typesense-api-key-file (or the environment
+    /// Typesense API key, used for --typesense-host and --probe-allowed-targets
+    /// (required with either; clusters in the config file bring their own).
+    /// Prefer --typesense-api-key-file (or the environment
     /// variable) over the flag, which other users can see in the process list.
     #[arg(
         long,
         env,
         hide_env_values = true,
-        required_unless_present = "typesense_api_key_file",
         conflicts_with = "typesense_api_key_file"
     )]
     pub typesense_api_key: Option<String>,
@@ -94,24 +107,39 @@ pub struct CliArgs {
     /// unauthenticated caller can put on the allowed nodes.
     #[arg(long, env = "TYPESENSE_PROBE_MAX_CONCURRENCY", default_value_t = 16, value_parser = clap::value_parser!(u32).range(1..))]
     pub probe_max_concurrency: u32,
+
+    /// Clusters from the config file, with their keys read.
+    #[arg(skip)]
+    pub clusters: ProbeConfig,
 }
 
 impl CliArgs {
+    /// Parse the process arguments and environment, merge the `--config` file
+    /// and exit with a message on any error.
+    pub fn load() -> Self {
+        Self::load_from(std::env::args_os()).unwrap_or_else(|e| e.exit())
+    }
+
+    /// Like [`CliArgs::load`], for the given arguments.
+    pub fn load_from<I, T>(args: I) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        let matches = Self::command().try_get_matches_from(args)?;
+        let mut args = Self::from_arg_matches(&matches)?;
+        config::merge(&mut args, &matches, |name| std::env::var(name).ok()).map_err(|msg| {
+            clap::Error::raw(clap::error::ErrorKind::ValueValidation, format!("{msg}\n"))
+        })?;
+        Ok(args)
+    }
+
     /// The API key, from `--typesense-api-key` or read from
     /// `--typesense-api-key-file`.
     pub fn api_key(&self) -> std::io::Result<String> {
         match (&self.typesense_api_key, &self.typesense_api_key_file) {
             (Some(key), _) => Ok(key.clone()),
-            (None, Some(path)) => {
-                let key = std::fs::read_to_string(path)?.trim().to_string();
-                if key.is_empty() {
-                    return Err(std::io::Error::other(format!(
-                        "API key file {} is empty",
-                        path.display()
-                    )));
-                }
-                Ok(key)
-            }
+            (None, Some(path)) => read_key_file(path),
             (None, None) => Err(std::io::Error::other("no Typesense API key configured")),
         }
     }
@@ -136,6 +164,18 @@ impl CliArgs {
     }
 }
 
+/// Read an API key file: surrounding whitespace is ignored, empty is an error.
+pub fn read_key_file(path: &Path) -> std::io::Result<String> {
+    let key = std::fs::read_to_string(path)?.trim().to_string();
+    if key.is_empty() {
+        return Err(std::io::Error::other(format!(
+            "API key file {} is empty",
+            path.display()
+        )));
+    }
+    Ok(key)
+}
+
 /// Like the derived `Debug`, but never prints the API key.
 impl fmt::Debug for CliArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -153,6 +193,8 @@ impl fmt::Debug for CliArgs {
             .field("typesense_timeout", &self.typesense_timeout)
             .field("metric_names", &self.metric_names)
             .field("probe_allowed_targets", &self.probe_allowed_targets)
+            .field("config", &self.config)
+            .field("clusters", &self.clusters)
             .finish()
     }
 }
@@ -226,8 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn requires_exactly_one_key_source() {
-        assert!(parse(&["--typesense-host=ts"]).is_err(), "no key");
+    fn rejects_two_key_sources() {
         assert!(
             parse(&[
                 "--typesense-host=ts",
@@ -324,10 +365,40 @@ mod tests {
     }
 
     #[test]
-    fn needs_a_host_or_an_allow_list() {
-        let err = parse(&["--typesense-api-key=k"]).unwrap_err();
-        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
-        assert!(parse(&["--typesense-host=ts", "--typesense-api-key=k"]).is_ok());
+    fn config_reads_its_environment_variable() {
+        let arg = CliArgs::command()
+            .get_arguments()
+            .find(|a| a.get_id() == "config")
+            .unwrap()
+            .clone();
+        assert_eq!(
+            arg.get_env().and_then(|e| e.to_str()),
+            Some("TYPESENSE_EXPORTER_CONFIG")
+        );
+        let args = parse(&["--config=/etc/e.toml"]).unwrap();
+        assert_eq!(args.config, Some(PathBuf::from("/etc/e.toml")));
+        assert_eq!(args.typesense_host, None);
+        assert!(args.api_key().is_err());
+    }
+
+    #[test]
+    fn load_from_merges_the_file_and_reports_errors_as_clap_errors() {
+        let path = std::env::temp_dir().join(format!("ts-cli-config-{}", std::process::id()));
+        std::fs::write(
+            &path,
+            "typesense_host = \"fromfile\"\ntypesense_api_key_env = \"TS_CLI_TEST_NO_SUCH_VAR\"\n",
+        )
+        .unwrap();
+        let cfg = format!("--config={}", path.display());
+
+        let err = CliArgs::load_from(["exporter", &cfg]).unwrap_err();
+        assert!(err.to_string().contains("TS_CLI_TEST_NO_SUCH_VAR"), "{err}");
+
+        let args = CliArgs::load_from(["exporter", &cfg, "--typesense-api-key=k"]).unwrap();
+        assert_eq!(args.typesense_host.as_deref(), Some("fromfile"));
+        std::fs::remove_file(&path).unwrap();
+
+        assert!(CliArgs::load_from(["exporter", "--bogus"]).is_err());
     }
 
     #[test]

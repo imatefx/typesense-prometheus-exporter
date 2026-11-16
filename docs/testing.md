@@ -4,8 +4,8 @@ Three layers, from fast and isolated to slow and real:
 
 | Layer | Where | Runs against | Count | Time | Needs |
 |---|---|---|---|---|---|
-| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 68 | < 1s | Rust |
-| Integration | [`tests/exporter.rs`](../tests/exporter.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 40 | ~1s | Rust |
+| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 83 | < 1s | Rust |
+| Integration | [`tests/exporter.rs`](../tests/exporter.rs), [`tests/config_env.rs`](../tests/config_env.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 51 | ~1s | Rust |
 | End-to-end | [`tests/e2e.rs`](../tests/e2e.rs) | A real 3-node Typesense cluster, one exporter, Prometheus and Grafana in Docker | 9 | ~3–5 min | Rust, Docker |
 
 ```bash
@@ -82,6 +82,30 @@ The 1.0 names ([design](metrics-v1.md)) and the `--metric-names` modes:
 | `empty_allow_list_allows_nothing_until_a_node_is_added` | Blank entries are skipped; the configured host can be added |
 | `allow_list_rejects_bad_entries` | Entries with a scheme, path, credentials, a zero port or bare IPv6 are errors |
 | `has_remote_ignores_loopback_entries` | Only non-loopback entries (or `*`) count as remote |
+| `lists_matches_exact_nodes_only` | `AllowList::lists` matches host (case-insensitive) and port, and `*` is not a listed node |
+
+### Config file: `src/config.rs`
+
+| Test | Verifies |
+|---|---|
+| `every_option_can_be_set_in_the_file` | Every option, a key file, and a cluster with an `api_key_env`, can come from the file; the cluster inherits the file's port and protocol |
+| `flags_beat_the_file_and_the_file_beats_defaults` | A flag wins (even one equal to the default); the file replaces built-in defaults |
+| `a_flag_key_replaces_the_files_key_settings` | A key from a flag skips the file's key settings; `typesense_api_key_env` is read and trimmed |
+| `rejects_bad_key_settings_in_the_file` | Unset or empty `typesense_api_key_env`, and both key sources, are errors naming the setting |
+| `rejects_unknown_keys_and_inline_secrets_without_echoing_them` | A typo, an inline `typesense_api_key` or cluster `api_key`, and unknown tables are errors; the hint points to the file/env options; the secret never appears |
+| `invalid_values_name_the_file_and_the_key` | Wrong types, out-of-range numbers, bad `metric_names`, `probe_max_concurrency = 0` and invalid TOML name the file and key |
+| `a_missing_config_file_is_an_error_and_no_file_changes_nothing` | A missing file names its path; without `--config` nothing changes |
+
+### Clusters: `src/probe_config.rs`
+
+| Test | Verifies |
+|---|---|
+| `reads_keys_from_a_file_and_from_the_environment` | Both key sources, trimming, lookup by host and port (case-insensitive) |
+| `protocol_overrides_the_default_and_ports_default` | A cluster's protocol overrides the default; ports default; IPv6 targets |
+| `rejects_missing_empty_or_doubled_keys_naming_the_cluster` | No key, unset/empty variable, empty or missing key file, and both sources are errors naming the cluster (and file) |
+| `rejects_bad_names_targets_protocols_and_empty_configs` | Cluster names outside `[A-Za-z0-9_-]+`, bad targets, no targets and a bad protocol |
+| `rejects_a_node_in_two_clusters_but_not_twice_in_one` | A node in two clusters names both; repeating it in one is harmless |
+| `debug_never_prints_the_key` | `Debug` output redacts the key |
 
 ### Models: `src/typesense/models/`
 
@@ -105,7 +129,7 @@ The 1.0 names ([design](metrics-v1.md)) and the `--metric-names` modes:
 | `accepts_overrides` | Every flag overrides its default |
 | `probe_concurrency_defaults_to_16_and_must_be_positive` | `--probe-max-concurrency` defaults to 16, takes a value, and rejects 0 |
 | `rejects_invalid_port_and_negative_timeout` | Port 99999 and a negative timeout are rejected |
-| `requires_exactly_one_key_source` | One of `--typesense-api-key` / `--typesense-api-key-file` is required, and not both |
+| `rejects_two_key_sources` | `--typesense-api-key` and `--typesense-api-key-file` can't both be set |
 | `reads_and_trims_the_key_file` | The key file is read and trimmed; an empty or missing file is an error |
 | `never_prints_the_key` | Debug output redacts the key, and `--help` hides its environment value |
 | `flags_plaintext_keys_to_remote_hosts` | Plain HTTP to a remote host is flagged; localhost and HTTPS are not |
@@ -115,7 +139,8 @@ The 1.0 names ([design](metrics-v1.md)) and the `--metric-names` modes:
 | `parses_probe_allowed_targets` | `--probe-allowed-targets` is empty by default and splits on commas |
 | `probe_allowed_targets_reads_its_environment_variable` | Also read from `TYPESENSE_PROBE_ALLOWED_TARGETS` |
 | `host_is_optional_with_an_allow_list` | `--typesense-host` can be left out when an allow list is set |
-| `needs_a_host_or_an_allow_list` | With neither, parsing fails with a missing-argument error |
+| `config_reads_its_environment_variable` | `--config` is also read from `TYPESENSE_EXPORTER_CONFIG`; with only `--config`, host and key stay unset until merged |
+| `load_from_merges_the_file_and_reports_errors_as_clap_errors` | `CliArgs::load_from` fills in the file's values and turns config errors into a clap error; unknown flags still fail |
 | `flags_plaintext_keys_sent_by_probe` | Plain HTTP with `*` or a non-loopback allowed host is flagged; loopback, no allow list and HTTPS are not |
 
 ## Integration tests: `tests/exporter.rs`
@@ -170,7 +195,18 @@ The exporter runs with the default `--metric-names=v1` unless a test says otherw
 | `metrics_is_unchanged_when_a_host_is_set` | `--typesense-host` and an allow list | `/metrics` works as before |
 | `root_mentions_probe` | `GET /` | Mentions `/metrics` and `/probe` |
 | `router_rejects_a_malformed_allowed_target` | `--probe-allowed-targets` entry with a path | `server::router` returns an error |
-| `router_needs_a_host_or_a_non_empty_allow_list` | No host and an empty allow list (clap accepts an empty `TYPESENSE_PROBE_ALLOWED_TARGETS`) | `server::router` returns an error |
+| `router_needs_a_host_or_a_non_empty_allow_list` | No host, no clusters and an empty allow list (clap accepts an empty `TYPESENSE_PROBE_ALLOWED_TARGETS`) | `server::router` returns an error |
+| `each_cluster_is_probed_with_only_its_own_key` | Two clusters (two mocks) with different keys, probed through one exporter with no default key | Both healthy; each mock received 6 requests, all with its own key and never the other |
+| `a_node_in_no_cluster_is_refused_without_a_request` | Probe a node that no cluster lists | 403; the node received no request |
+| `a_cluster_with_https_refuses_http_targets` | Cluster `protocol = "https"`, probe `http://node` | 403 `must be https`; no request |
+| `a_cluster_protocol_overrides_the_default_for_bare_targets` | Default protocol https, cluster http, bare target | 200 and healthy |
+| `probe_config_works_alongside_the_default_key_and_host` | `--typesense-host`, `*` and a cluster together | `/metrics` and other nodes use the default key; the cluster node uses only its own, despite `*` |
+| `probe_config_alone_leaves_metrics_404` | Only clusters configured | `/metrics` is 404 and points to `/probe` |
+| `router_rejects_a_node_that_has_two_keys` | A cluster node also in `--probe-allowed-targets`, or equal to `--typesense-host` | Startup error naming the cluster and the other place |
+| `bad_config_files_are_reported_without_leaking_keys` | Missing file, inline `api_key`, unreadable key file | Errors name the file/cluster; the inline secret isn't echoed |
+| `the_exporter_starts_from_a_config_file_alone` | Host, port, key file and timeout all in the file, no flags | `/metrics` works |
+| `router_needs_the_default_key_for_a_host_or_allow_list` | Clusters plus `--typesense-host` or an allow list but no default key | `server::router` returns an error; clusters alone are fine |
+| `flag_beats_environment_beats_file_beats_default` (`tests/config_env.rs`) | Real environment variables, flags and a file | Flag > environment > file > default; `--config` read from `TYPESENSE_EXPORTER_CONFIG` |
 
 **Checking that the tests catch bugs.** The suite was checked by breaking the code on purpose (re-measured for 1.0.0):
 - Removing the API key header failed 17 of the 24 integration tests.

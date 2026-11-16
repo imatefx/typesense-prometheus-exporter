@@ -45,7 +45,7 @@ impl Target {
 }
 
 /// `host[:port]` or `[v6][:port]`, normalised to a lowercase host and a port.
-fn parse_authority(s: &str, default_port: u16) -> Result<(String, u16), String> {
+pub(crate) fn parse_authority(s: &str, default_port: u16) -> Result<(String, u16), String> {
     if s.contains(['/', '?', '#']) {
         return Err("target must not contain a path, query or fragment".to_string());
     }
@@ -168,6 +168,12 @@ impl AllowList {
 
     pub fn is_empty(&self) -> bool {
         !self.any && self.nodes.is_empty()
+    }
+
+    /// Whether this exact node is listed (not counting `*`).
+    pub fn lists(&self, host: &str, port: u16) -> bool {
+        let host = normalize_host(host);
+        self.nodes.iter().any(|(h, p)| *h == host && *p == port)
     }
 
     pub fn allows_any(&self) -> bool {
@@ -348,6 +354,14 @@ mod tests {
             let err = AllowList::parse(&[bad.to_string()], 8108).unwrap_err();
             assert!(err.contains(bad), "{err}");
         }
+    }
+
+    #[test]
+    fn lists_matches_exact_nodes_only() {
+        let l = list(&["Ts:9", "*"]);
+        assert!(l.lists("TS", 9));
+        assert!(!l.lists("ts", 8108));
+        assert!(!l.lists("other", 9), "* is not a listed node");
     }
 
     #[test]
