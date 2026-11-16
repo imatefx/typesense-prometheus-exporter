@@ -54,7 +54,7 @@ open http://localhost:3000        # Grafana: admin / admin
 docker run -d -p 8888:8888 \
   -e TYPESENSE_HOST=typesense-1.internal \
   -e TYPESENSE_API_KEY=<admin-api-key> \
-  imatefx/typesense-prometheus-exporter:v0.2.0
+  imatefx/typesense-prometheus-exporter:v0.3.0
 
 curl -s localhost:8888/metrics | grep -E '^typesense_(health|raft_state)'
 ```
