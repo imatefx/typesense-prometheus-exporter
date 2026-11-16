@@ -22,7 +22,7 @@
 [Testing](docs/testing.md) ·
 [Changelog](CHANGELOG.md)
 
-<img src="screenshots/Typesense-Stats.png" alt="Typesense Stats dashboard: request rates, latency, health, raft state and cache hit ratio for a 3-node cluster" width="900">
+<img src="screenshots/Typesense-Cluster-Overview.png" alt="Typesense Cluster Overview dashboard: health, leader, versions, replication lag and traffic for a 3-node cluster" width="900">
 
 </div>
 
@@ -32,10 +32,11 @@
 |---|---|
 | 🩺 **Health and cluster state** | `typesense_health` and `typesense_raft_state` per node. Alert on an unhealthy node, or on a cluster that has lost its leader. |
 | 📊 **System and memory** | CPU for every core, disk, memory, swap, network, and Typesense's allocator memory. |
-| ⚡ **Request stats** | Requests per second and latency for search, write, import and delete. Broken down per endpoint and per collection, plus cache hit ratio and pending write batches. |
+| ⚡ **Request stats** | Requests per second, and latency for search, write, import and delete: average, p70, p95, p99, min and max. Broken down per endpoint and per collection, plus cache hits and misses and pending write batches. |
+| 🔁 **Replication and collections** | Raft committed index and queued writes per node, so you can see replication lag. Document count per collection. Typesense version per node. |
 | 🎯 **Honest failures** | If Typesense can't be reached, its metrics are left out, never faked as zeros. A per-request timeout keeps a hung node from stalling scrapes. |
 | 📦 **Tiny image** | A static binary in a `FROM scratch` image, for linux/amd64 and linux/arm64. |
-| 🧰 **Batteries included** | 3 Grafana dashboards, Prometheus alert rules, and a one-command Docker Compose cluster for trying it all out. |
+| 🧰 **Batteries included** | 4 Grafana dashboards, Prometheus alert rules, and a one-command Docker Compose cluster for trying it all out. |
 
 ## Quick start
 
@@ -80,8 +81,12 @@ See [configuration](docs/configuration.md) for API key permissions, timeouts, fa
 |---|---|
 | `typesense_health` | 1 healthy, 0 unhealthy or unreachable |
 | `typesense_raft_state` | 1 leader, 4 follower, 0 other or unreachable |
+| `typesense_raft_committed_index` | Raft log position; compare across nodes for replication lag |
+| `typesense_raft_queued_writes` | Writes waiting to be applied |
+| `typesense_collection_documents{collection=…}` | Documents per collection |
+| `typesense_info{version=…}` | Typesense version of each node |
 | `typesense_metrics{key=…}` | CPU (per core), disk, memory, swap, network, allocator memory |
-| `typesense_stats{key=…}` | Requests per second, latency, pending writes, cache hit ratio |
+| `typesense_stats{key=…}` | Every numeric `/stats.json` field: requests per second, latency avg/p70/p95/p99/min/max, pending writes, cache hits/misses/ratio |
 | `typesense_stats_*_by_collection` | Requests per second and latency per collection and action |
 
 See the [metrics reference](docs/metrics.md) for every key, with example PromQL.
@@ -96,6 +101,14 @@ See the [metrics reference](docs/metrics.md) for every key, with example PromQL.
 
 ## Dashboards
 
+Four dashboards, each with a **Node** filter.
+
+<details>
+<summary><b>Typesense Cluster Overview</b>: health, leader, versions, replication lag, documents, headline traffic</summary>
+
+![Typesense Cluster Overview dashboard](screenshots/Typesense-Cluster-Overview.png)
+</details>
+
 <details>
 <summary><b>Typesense Metrics</b>: CPU per core, disk, memory, swap, network, allocator memory</summary>
 
@@ -103,13 +116,13 @@ See the [metrics reference](docs/metrics.md) for every key, with example PromQL.
 </details>
 
 <details>
-<summary><b>Typesense Stats</b>: request rates, latency, health, raft state, cache hit ratio</summary>
+<summary><b>Typesense Stats</b>: request rates, latency avg/p95/p99/max, cache</summary>
 
 ![Typesense Stats dashboard](screenshots/Typesense-Stats.png)
 </details>
 
 <details>
-<summary><b>Typesense By Collection</b>: per-collection request rate and latency</summary>
+<summary><b>Typesense By Collection</b>: per-collection request rate, latency and documents</summary>
 
 ![Typesense By Collection dashboard](screenshots/Typesense-By-Collection.png)
 </details>
@@ -126,7 +139,7 @@ make up / down    # start / stop the Docker Compose stack
 ./build-cross.sh  # static linux/amd64 + linux/arm64 binaries
 ```
 
-There are 38 tests in three layers. **Unit** and **integration** tests run against a mock Typesense. **End-to-end** tests run against a real cluster and break it on purpose: leader failover, a hung node, quorum loss. See [testing](docs/testing.md) for the full list.
+There are 44 tests in three layers. **Unit** and **integration** tests run against a mock Typesense. **End-to-end** tests run against a real cluster and break it on purpose: leader failover, a hung node, quorum loss. See [testing](docs/testing.md) for the full list.
 
 ## Contributors
 

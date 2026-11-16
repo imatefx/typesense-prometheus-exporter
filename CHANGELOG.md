@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Every numeric `/stats.json` field is now exported** as `typesense_stats{key=...}`:
+  - latency p70, p95 and p99, min and max for search, write, import and delete
+  - `cache_hit_count` and `cache_miss_count`
+  - any field later Typesense versions add
+- `typesense_info{version}`: the Typesense version each node runs, from `/debug`.
+- `typesense_raft_committed_index` and `typesense_raft_queued_writes` from `/status`. Comparing the committed index across nodes shows replication lag.
+- `typesense_collection_documents{collection}`: document count per collection, from `/collections`.
+- Grafana: a new **Typesense Cluster Overview** dashboard, with:
+  - unhealthy nodes, leader, documents, search rate, p95 and cache ratio
+  - per-node health, raft state and version
+  - replication lag, commit rate and queued writes
+  - traffic
+- Grafana: a **Node** filter on every dashboard.
+- Grafana: latency panels show avg, p95, p99 and max.
+- Grafana: cache hits and misses, and documents per collection.
+- Docs: the exact scoped API key actions the exporter needs.
+
+### Changed
+- **The scoped API key needs two more actions:** `status:list` and `collections:list`. Without them, only the new metrics are missing; the exporter logs the 401 and exports the rest.
+- `/stats.json` fields that are missing or non-numeric are now left out instead of exported as 0.
+- Grafana: health and raft state tiles moved from Typesense Stats to the Cluster Overview.
+
+### Fixed
+- Grafana By Collection: selecting several collections, or All, now works (`=~` instead of `=`). The collection list now includes collections with no traffic yet.
+
 ## [0.2.0] - 2026-11-16
 
 A rewrite of the exporter's internals, plus cluster monitoring, new metrics,
@@ -76,6 +104,7 @@ dashboards, a local stack and a full test suite. Metric names and labels from
 ### Added
 - First release: exports Typesense `/metrics.json` and `/stats.json` in Prometheus format.
 
+[Unreleased]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.1.3...v0.1.4

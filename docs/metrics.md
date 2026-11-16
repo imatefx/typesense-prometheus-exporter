@@ -13,6 +13,14 @@ All metrics are gauges. Every series carries:
 
 Both are exported on every scrape, even when Typesense is down.
 
+| Metric | Values | Source |
+|---|---|---|
+| `typesense_info{version}` | Always `1`; the `version` label carries the Typesense version | `/debug` |
+| `typesense_raft_committed_index` | Last raft log index committed on this node | `/status` |
+| `typesense_raft_queued_writes` | Writes queued on this node, waiting to be applied | `/status` |
+
+These three are left out if the endpoint fails or Typesense doesn't report the field (older versions).
+
 ```promql
 # Unhealthy nodes
 typesense_health == 0
@@ -22,6 +30,18 @@ max(typesense_raft_state == bool 1) == 0
 
 # Which node is leader?
 typesense_raft_state == 1
+
+# Replication lag: log entries each node is behind the most advanced node.
+# Exporters are scraped a few seconds apart, so under steady writes this
+# includes up to (commit rate × scrape interval) of skew; it is exact when
+# writes pause. Alert on lag that keeps growing, not on a single value.
+scalar(max(typesense_raft_committed_index)) - typesense_raft_committed_index
+
+# Cluster write throughput (raft entries committed per second)
+rate(typesense_raft_committed_index{host="typesense-1"}[5m])
+
+# Nodes running a different version from the rest
+count by (version) (typesense_info)
 ```
 
 ## System and memory: `typesense_metrics{key=...}`
@@ -56,18 +76,40 @@ max by (host) (typesense_metrics{key=~"system_cpu[0-9]+_active_percentage"})
 
 ## Request stats: `typesense_stats{key=...}`
 
-From `/stats.json`. Typesense computes these over a short rolling window, and they only count requests **this node** served.
+From `/stats.json`. **Every numeric field Typesense reports is exported,** so fields that new Typesense versions add appear automatically. Typesense computes these over a short rolling window, and they only count requests **this node** served.
 
-| `key` | Unit |
-|---|---|
-| `total_requests_per_second` | req/s |
-| `search_requests_per_second`, `search_latency_ms` | req/s, ms |
-| `write_requests_per_second`, `write_latency_ms` | req/s, ms |
-| `import_requests_per_second`, `import_latency_ms` | req/s, ms |
-| `delete_requests_per_second`, `delete_latency_ms` | req/s, ms |
-| `overloaded_requests_per_second` | req/s |
-| `pending_write_batches` | count |
-| `cache_hit_ratio` | ratio, 0–1. Typesense v28+ only; absent on older versions. Searches only use the cache with `use_cache=true`. |
+| `key` | Unit | Notes |
+|---|---|---|
+| `total_requests_per_second` | req/s | |
+| `{search,write,import,delete}_requests_per_second` | req/s | |
+| `{search,write,import,delete}_latency_ms` | ms | average |
+| `{search,write,import,delete}_70Percentile_latency_ms` | ms | p70 |
+| `{search,write,import,delete}_95Percentile_latency_ms` | ms | p95 |
+| `{search,write,import,delete}_99Percentile_latency_ms` | ms | p99 |
+| `{search,write,import,delete}_min_latency_ms`, `…_max_latency_ms` | ms | min / max |
+| `overloaded_requests_per_second` | req/s | requests rejected because the node was overloaded |
+| `pending_write_batches` | count | |
+| `cache_hit_count`, `cache_miss_count` | count | search cache |
+| `cache_hit_ratio` | ratio, 0–1 | Searches only use the cache with `use_cache=true` |
+
+Typesense 30.x reports percentiles, min/max and cache figures; older versions report fewer fields. An operation's percentiles only appear once that operation has had traffic. A field Typesense doesn't report is not exported.
+
+```promql
+# Worst p99 search latency in the cluster
+max(typesense_stats{key="search_99Percentile_latency_ms"})
+```
+
+## Collections: `typesense_collection_documents{collection=...}`
+
+From `/collections`: the number of documents in each collection, as seen by this node. In a healthy cluster every node reports the same counts.
+
+```promql
+# Documents per collection
+max by (collection) (typesense_collection_documents)
+
+# Collections that grew by more than 10k documents in the last hour
+delta(typesense_collection_documents{host="typesense-1"}[1h]) > 10000
+```
 
 ## Per endpoint and per collection
 

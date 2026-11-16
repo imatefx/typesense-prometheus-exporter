@@ -11,7 +11,7 @@ flowchart LR
         T2["typesense-2 (leader)"]
         T3["typesense-3"]
     end
-    E1["exporter-1"] -->|"/metrics.json<br/>/stats.json<br/>/health<br/>/debug"| T1
+    E1["exporter-1"] -->|"/metrics.json /stats.json<br/>/health /debug<br/>/status /collections"| T1
     E2["exporter-2"] --> T2
     E3["exporter-3"] --> T3
     P["Prometheus<br/>+ alert rules"] -->|"GET /metrics"| E1 & E2 & E3
@@ -33,14 +33,16 @@ sequenceDiagram
         E->>T: GET /stats.json
         E->>T: GET /health
         E->>T: GET /debug
+        E->>T: GET /status
+        E->>T: GET /collections
     end
     T-->>E: responses (or errors / timeouts)
     Note over E: failed endpoints are logged and left out,<br/>health and raft state fall back to 0
     E-->>P: 200, Prometheus text format
 ```
 
-1. **Fetch.** `server::metrics_handler` calls the four Typesense endpoints concurrently with `tokio::join!`. They share one reqwest client, which applies `TYPESENSE_TIMEOUT` to each request.
-2. **Decide.** Each result is either kept or logged and dropped (`log_failure`). The handler builds a `Scrape` from what survived: optional metrics, optional stats, a health flag and a raft state.
+1. **Fetch.** `server::metrics_handler` calls the six Typesense endpoints concurrently with `tokio::join!`. They share one reqwest client, which applies `TYPESENSE_TIMEOUT` to each request.
+2. **Decide.** Each result is either kept or logged and dropped (`log_failure`). The handler builds a `Scrape` from what survived: optional metrics, stats, status and collections, a health flag, a raft state and a version.
 3. **Render.** `prometheus_exp::generate_metrics` builds a fresh Prometheus registry for this scrape, adds a gauge for each metric that has data, and encodes it to text.
 
 A fresh registry on every scrape means a metric that disappears from Typesense also disappears from the exporter. Nothing stale is left behind.
@@ -53,7 +55,7 @@ A fresh registry on every scrape means a metric that disappears from Typesense a
 | `src/cli.rs` | `CliArgs`: flags and environment variables (clap) |
 | `src/server.rs` | axum router (`/`, `/metrics`), scrape handler, graceful shutdown |
 | `src/typesense/mod.rs` | `TypesenseClient`: one HTTP client, base URL, API key; one method per endpoint |
-| `src/typesense/models/` | serde models for the four endpoint responses. Each exposes `entries()`, the `(key, value)` pairs to export |
+| `src/typesense/models/` | serde models for the six endpoint responses. `metrics` and `stats` expose `entries()`, the `(key, value)` pairs to export |
 | `src/prometheus_exp.rs` | `Scrape`, plus rendering to Prometheus text: gauges, per-collection parsing, label handling |
 | `src/lib.rs` | Exposes the modules so integration and e2e tests can build the real router |
 
@@ -66,6 +68,8 @@ A fresh registry on every scrape means a metric that disappears from Typesense a
 **`/metrics` always returns 200.** Typesense failures are reported in the metrics, not as an HTTP error. `up == 0` is kept for "the exporter itself is down".
 
 **Timeout below the scrape timeout.** A hung Typesense node must not hold the response past Prometheus' scrape timeout, or the whole scrape is lost and the problem shows up as the wrong alert. See [configuration](configuration.md#timeouts).
+
+**Export every numeric stat.** `/stats.json` keeps gaining fields (latency percentiles and min/max, cache counters). The model captures all top-level fields and exports every numeric one, so new Typesense versions need no exporter change.
 
 **Per-core CPU by pattern.** `/metrics.json` has one `system_cpuN_active_percentage` key per core. The model captures unknown keys with `#[serde(flatten)]` and exports those matching `system_cpu<digits>_active_percentage`, so any core count works.
 
