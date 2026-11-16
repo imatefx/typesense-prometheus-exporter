@@ -6,6 +6,9 @@
 # Exporters: http://localhost:8888/metrics, :8889, :8890 (one per node)
 # Typesense: http://localhost:8108, :8109, :8110
 
+# Typesense nodes peer by fixed IP (deploy/typesense/nodes), not hostname:
+# Docker drops a stopped container's DNS name and may give a restarted one a
+# new IP, either of which leaves a rejoining node unable to peer.
 x-typesense: &typesense
   image: typesense/typesense:30.1
   command:
@@ -34,16 +37,19 @@ services:
   typesense-1:
     <<: *typesense
     hostname: typesense-1
+    networks: { default: { ipv4_address: 10.89.0.11 } }
     ports: ["8108:8108"]
     volumes: [./deploy/typesense/nodes:/etc/typesense/nodes:ro, typesense-1-data:/data]
   typesense-2:
     <<: *typesense
     hostname: typesense-2
+    networks: { default: { ipv4_address: 10.89.0.12 } }
     ports: ["8109:8108"]
     volumes: [./deploy/typesense/nodes:/etc/typesense/nodes:ro, typesense-2-data:/data]
   typesense-3:
     <<: *typesense
     hostname: typesense-3
+    networks: { default: { ipv4_address: 10.89.0.13 } }
     ports: ["8110:8108"]
     volumes: [./deploy/typesense/nodes:/etc/typesense/nodes:ro, typesense-3-data:/data]
 
@@ -92,6 +98,12 @@ services:
     depends_on:
       prometheus: { condition: service_started }
       grafana-dashboards: { condition: service_completed_successfully }
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 10.89.0.0/24
 
 volumes:
   typesense-1-data:

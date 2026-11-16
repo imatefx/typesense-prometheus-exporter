@@ -18,8 +18,9 @@ coverage:
 coverage-html:
 	cargo llvm-cov --html --open
 
+# Starts the compose stack, runs the e2e tests, then always tears it down.
 e2e:
-	./e2e/run.sh
+	cargo test --features e2e --test e2e; status=$$?; docker compose down -v; exit $$status
 
 up:
 	docker compose up -d --build --wait

@@ -55,9 +55,22 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   e2e:
-    name: end-to-end (docker compose)
+    name: end-to-end (3-node cluster)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run e2e
-        run: ./e2e/run.sh
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@nextest
+      - name: Run e2e tests
+        run: cargo nextest run --features e2e --test e2e --profile ci
+      - name: Exporter logs
+        if: failure()
+        run: docker compose logs --tail 50 exporter-1 exporter-2 exporter-3
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-junit
+          path: target/nextest/ci/junit.xml

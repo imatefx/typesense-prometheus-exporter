@@ -17,3 +17,12 @@ tracing-subscriber = "0.3.18"
 
 [dev-dependencies]
 wiremock = "0.6"
+
+[features]
+# End-to-end tests against the docker compose stack: `make e2e`.
+e2e = []
+
+[[test]]
+name = "e2e"
+path = "tests/e2e.rs"
+required-features = ["e2e"]

@@ -10,3 +10,4 @@
 .omc/
 lcov.info
 .playwright-mcp/
+junit.xml
