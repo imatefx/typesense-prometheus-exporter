@@ -152,7 +152,11 @@ If the local figure looks wrong (lines marked uncovered that are blank or commen
 | `test` | Unit and integration tests under `cargo llvm-cov` (90% minimum); uploads `lcov.info`; publishes the coverage badge on `main` |
 | `e2e` | `cargo nextest run --features e2e --test e2e --profile ci`; uploads a JUnit report; prints exporter logs on failure; always tears the stack down |
 
-[`rust.yml`](../.github/workflows/rust.yml) also builds release binaries for Linux (amd64, arm64), macOS (amd64, arm64) and Windows on every pull request.
+Two more workflows check every pull request:
+- [`rust.yml`](../.github/workflows/rust.yml) builds the release binaries: Linux amd64 and arm64 (arm64 on a native `ubuntu-24.04-arm` runner), macOS amd64 and arm64, and Windows.
+- [`docker.yml`](../.github/workflows/docker.yml) builds the Docker image for amd64 and arm64, each on a native runner, without pushing. It runs when a pull request touches the Dockerfile, sources or the workflow.
+
+On a version tag, both workflows run `cargo test --locked` first, and publish nothing if it fails.
 
 ## Adding tests
 
