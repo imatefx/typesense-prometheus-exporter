@@ -15,7 +15,7 @@ flowchart LR
     E2["exporter-2"] --> T2
     E3["exporter-3"] --> T3
     P["Prometheus<br/>+ alert rules"] -->|"GET /metrics"| E1 & E2 & E3
-    G["Grafana<br/>3 dashboards"] -->|PromQL| P
+    G["Grafana<br/>4 dashboards"] -->|PromQL| P
 ```
 
 **Run one exporter per Typesense node.** Each node reports only its own raft role, health and system resources, and only the requests it served itself. An exporter in front of a load balancer would report a random node on each scrape.
