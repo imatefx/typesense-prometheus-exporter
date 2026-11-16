@@ -1,23 +1,101 @@
-name: Rust
+name: Rust Multi-Architecture Build
 
 on:
   push:
     tags:
     - '*'
+  pull_request:
+    branches: [ main, master ]
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   build:
-
-    runs-on: ubuntu-latest
+    name: Build for ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact_name: typesense-prometheus-exporter
+            asset_name: typesense-prometheus-exporter-linux-amd64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact_name: typesense-prometheus-exporter
+            asset_name: typesense-prometheus-exporter-linux-arm64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            artifact_name: typesense-prometheus-exporter
+            asset_name: typesense-prometheus-exporter-macos-amd64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact_name: typesense-prometheus-exporter
+            asset_name: typesense-prometheus-exporter-macos-arm64
+          - target: x86_64-pc-windows-gnu
+            os: ubuntu-latest
+            artifact_name: typesense-prometheus-exporter.exe
+            asset_name: typesense-prometheus-exporter-windows-amd64.exe
 
     steps:
-    - uses: actions/checkout@v3
-    - name: Build
-      run: cargo build --release --verbose
-    - uses: ncipollo/release-action@v1
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
       with:
-        artifacts: "target/release/typesense-prometheus-exporter"
+        targets: ${{ matrix.target }}
+    
+    - name: Install cross-compilation dependencies (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu gcc-mingw-w64-x86-64
         
+    - name: Configure cross-compilation
+      if: matrix.target == 'aarch64-unknown-linux-gnu'
+      run: |
+        echo '[target.aarch64-unknown-linux-gnu]' >> ~/.cargo/config.toml
+        echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
+        
+    - name: Configure Windows cross-compilation
+      if: matrix.target == 'x86_64-pc-windows-gnu'
+      run: |
+        echo '[target.x86_64-pc-windows-gnu]' >> ~/.cargo/config.toml
+        echo 'linker = "x86_64-w64-mingw32-gcc"' >> ~/.cargo/config.toml
+        
+    - name: Build
+      run: cargo build --release --target ${{ matrix.target }} --verbose
+      
+    - name: Rename artifact
+      run: |
+        mkdir -p artifacts
+        cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} artifacts/${{ matrix.asset_name }}
+        
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.asset_name }}
+        path: artifacts/${{ matrix.asset_name }}
+        
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+        
+    - name: Prepare release assets
+      run: |
+        mkdir -p release-assets
+        find artifacts -type f -exec cp {} release-assets/ \;
+        ls -la release-assets/
+        
+    - name: Create Release
+      uses: ncipollo/release-action@v1
+      with:
+        artifacts: "release-assets/*"
+        generateReleaseNotes: true
