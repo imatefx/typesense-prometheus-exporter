@@ -63,6 +63,29 @@ docker run -d -p 8888:8888 \
 curl -s localhost:8888/metrics | grep -E '^typesense_(health|raft_state)'
 ```
 
+Then scrape it from Prometheus. The exporter serves `/metrics`, the Prometheus default, so a single node needs only its address:
+
+```yaml
+scrape_configs:
+  - job_name: typesense-exporter
+    scrape_timeout: 10s   # must be above TYPESENSE_TIMEOUT (5s by default)
+    static_configs:
+      - targets: [exporter-1.internal:8888]
+```
+
+For a cluster with one exporter next to each node, list every exporter:
+
+```yaml
+scrape_configs:
+  - job_name: typesense-exporter
+    scrape_timeout: 10s
+    static_configs:
+      - targets:
+          - exporter-1.internal:8888   # exporter for typesense-1
+          - exporter-2.internal:8888   # exporter for typesense-2
+          - exporter-3.internal:8888   # exporter for typesense-3
+```
+
 **One exporter for a whole cluster.** Leave out `TYPESENSE_HOST`, list the nodes the exporter may probe, and let Prometheus pass each node as a target, like `blackbox_exporter`:
 
 ```bash
@@ -110,7 +133,7 @@ scrape_configs:
 
 The exporter only probes the listed nodes, because it sends its API key to every node it scrapes. See [configuration](docs/configuration.md#probing-several-nodes-from-one-exporter).
 
-Then add the exporter(s) to Prometheus, and import the [dashboards](grafana/) and [alert rules](deploy/prometheus/alerts.yml). The [getting started guide](docs/getting-started.md) walks through it.
+Then import the [dashboards](grafana/) and [alert rules](deploy/prometheus/alerts.yml). The [getting started guide](docs/getting-started.md) walks through it.
 
 ## Configuration
 
