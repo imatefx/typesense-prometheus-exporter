@@ -62,7 +62,46 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
   "id": null,
-  "links": [],
+  "links": [
+    {
+      "title": "Documentation",
+      "type": "link",
+      "url": "https://stalin-pereira.com/typesense-prometheus-exporter/",
+      "icon": "doc",
+      "targetBlank": true,
+      "asDropdown": false,
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "tooltip": "typesense-prometheus-exporter documentation"
+    },
+    {
+      "title": "GitHub",
+      "type": "link",
+      "url": "https://github.com/imatefx/typesense-prometheus-exporter",
+      "icon": "external link",
+      "targetBlank": true,
+      "asDropdown": false,
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "tooltip": "Exporter source, releases and issues"
+    },
+    {
+      "title": "Typesense dashboards",
+      "type": "dashboards",
+      "tags": [
+        "typesense"
+      ],
+      "asDropdown": true,
+      "includeVars": true,
+      "keepTime": true,
+      "icon": "external link",
+      "targetBlank": false,
+      "tooltip": "",
+      "url": ""
+    }
+  ],
   "liveNow": false,
   "panels": [
     {
@@ -1369,7 +1408,11 @@
   "refresh": "10s",
   "schemaVersion": 37,
   "style": "dark",
-  "tags": [],
+  "tags": [
+    "prometheus",
+    "search",
+    "typesense"
+  ],
   "templating": {
     "list": [
       {
@@ -1414,5 +1457,6 @@
   "title": "Typesense Stats",
   "uid": "1aVBQ0cSz",
   "version": 12,
-  "weekStart": ""
+  "weekStart": "",
+  "description": "Typesense request rates, search/import/write/delete latency (avg and p70/p95/p99/max), cache hit ratio and pending writes per node. Uses typesense-prometheus-exporter 1.x."
 }

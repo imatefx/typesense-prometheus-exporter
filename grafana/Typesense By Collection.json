@@ -62,7 +62,46 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 2,
   "id": null,
-  "links": [],
+  "links": [
+    {
+      "title": "Documentation",
+      "type": "link",
+      "url": "https://stalin-pereira.com/typesense-prometheus-exporter/",
+      "icon": "doc",
+      "targetBlank": true,
+      "asDropdown": false,
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "tooltip": "typesense-prometheus-exporter documentation"
+    },
+    {
+      "title": "GitHub",
+      "type": "link",
+      "url": "https://github.com/imatefx/typesense-prometheus-exporter",
+      "icon": "external link",
+      "targetBlank": true,
+      "asDropdown": false,
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "tooltip": "Exporter source, releases and issues"
+    },
+    {
+      "title": "Typesense dashboards",
+      "type": "dashboards",
+      "tags": [
+        "typesense"
+      ],
+      "asDropdown": true,
+      "includeVars": true,
+      "keepTime": true,
+      "icon": "external link",
+      "targetBlank": false,
+      "tooltip": "",
+      "url": ""
+    }
+  ],
   "liveNow": false,
   "panels": [
     {
@@ -436,7 +475,11 @@
   "refresh": "30s",
   "schemaVersion": 37,
   "style": "dark",
-  "tags": [],
+  "tags": [
+    "prometheus",
+    "search",
+    "typesense"
+  ],
   "templating": {
     "list": [
       {
@@ -504,5 +547,6 @@
   "title": "Typesense By Collection",
   "uid": "ie4hX0cSk",
   "version": 9,
-  "weekStart": ""
+  "weekStart": "",
+  "description": "Typesense traffic and latency per collection and action, and document counts per collection. Uses typesense-prometheus-exporter 1.x."
 }
