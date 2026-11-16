@@ -19,6 +19,15 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
 
+  audit:
+    name: security audit (cargo audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@cargo-audit
+      - name: Check dependencies against the RustSec advisory database
+        run: cargo audit -D warnings
+
   test:
     name: unit + integration tests, coverage
     runs-on: ubuntu-latest

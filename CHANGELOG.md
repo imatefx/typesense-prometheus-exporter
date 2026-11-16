@@ -6,6 +6,26 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-16
+
+### Added
+- `typesense_scrape_success{endpoint}` and `typesense_scrape_duration_seconds`, so partial scrape failures (missing key permissions, older Typesense) can be alerted on. Comes with a `TypesenseScrapeFailing` alert rule.
+- `--typesense-api-key-file` / `TYPESENSE_API_KEY_FILE`: read the API key from a file, e.g. a Docker or Kubernetes secret.
+- CI runs `cargo audit`. Releases and Docker images are only published after the tests pass.
+
+### Changed
+- **Bounded labels:** document and other resource IDs in Typesense's per-endpoint stats are replaced with `:id` (`GET /collections/products/documents/:id`). Before, each document read by ID created new series. Merged entries sum their request rates and average latency weighted by rate.
+- **The `_by_collection` metrics no longer carry the `key` label.** It duplicated the per-endpoint metrics. Update any queries that filter on it.
+- **`--typesense-timeout` takes 0 or a positive number of seconds;** 0 disables it. Negative values are rejected.
+- Values Typesense reports that aren't numbers are left out instead of exported as 0.
+- `/collections` is requested without schemas (`exclude_fields=fields`), a much smaller response.
+- The container runs as an unprivileged user (65534) and caches dependencies between builds.
+- Dependencies upgraded: axum 0.8, reqwest 0.12, prometheus 0.14 (without protobuf), tokio, clap and others.
+
+### Security
+- Fixed 19 known vulnerabilities in pinned dependencies (h2, rustls, rustls-webpki, ring, tokio, protobuf and others). `cargo audit` is clean.
+- The API key is hidden in `--help` and redacted from debug output. A warning is logged when it would be sent over plain HTTP to another machine.
+
 ## [0.3.1] - 2026-11-16
 
 ### Fixed
@@ -111,7 +131,8 @@ dashboards, a local stack and a full test suite. Metric names and labels from
 ### Added
 - First release: exports Typesense `/metrics.json` and `/stats.json` in Prometheus format.
 
-[Unreleased]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.1.5...v0.2.0

@@ -21,3 +21,12 @@ groups:
         labels: { severity: critical }
         annotations:
           summary: "No Typesense node reports itself as raft leader"
+
+      # A node is healthy but the exporter can't read one of its endpoints,
+      # e.g. the API key lacks an action, or an older Typesense lacks /status.
+      - alert: TypesenseScrapeFailing
+        expr: typesense_scrape_success{endpoint!="/health"} == 0 unless on (host, port) typesense_health == 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Exporter can't read {{ $labels.endpoint }} from Typesense {{ $labels.host }}:{{ $labels.port }}"

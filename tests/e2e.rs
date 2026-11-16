@@ -439,6 +439,20 @@ async fn cluster_has_one_leader_and_two_followers() {
             gauge(&samples, "typesense_raft_queued_writes").is_some(),
             "exporter-{node} reports queued writes"
         );
+        let scrape_results: Vec<(&str, f64)> = samples
+            .iter()
+            .filter(|s| s.name == "typesense_scrape_success")
+            .map(|s| (s.labels["endpoint"].as_str(), s.value))
+            .collect();
+        assert_eq!(
+            scrape_results.len(),
+            6,
+            "exporter-{node}: {scrape_results:?}"
+        );
+        assert!(
+            scrape_results.iter().all(|(_, v)| *v == 1.0),
+            "exporter-{node} reads every endpoint: {scrape_results:?}"
+        );
     }
     roles.sort_by(f64::total_cmp);
     assert_eq!(roles, [RAFT_LEADER, RAFT_FOLLOWER, RAFT_FOLLOWER]);
@@ -517,9 +531,54 @@ async fn traffic_is_reported_by_the_node_that_served_it() {
     }
 
     eventually(
+        "document reads by ID fold into one documents/:id series",
+        Duration::from_secs(60),
+        || async {
+            for id in ["1", "2", "3"] {
+                let res = typesense(
+                    1,
+                    reqwest::Method::GET,
+                    &format!("/collections/e2e_products/documents/{id}"),
+                )
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+                ensure(
+                    res.status().is_success(),
+                    format!("get {id}: {}", res.status()),
+                )?;
+            }
+            let keys: Vec<String> = scrape(1)
+                .await?
+                .into_iter()
+                .filter(|s| s.name == "typesense_stats_requests_per_second")
+                .map(|s| s.labels["key"].clone())
+                .filter(|k| k.contains("/collections/e2e_products/documents/"))
+                .collect();
+            ensure(
+                keys.iter()
+                    .any(|k| k == "GET /collections/e2e_products/documents/:id"),
+                format!("no documents/:id series yet: {keys:?}"),
+            )?;
+            ensure(
+                !keys
+                    .iter()
+                    .any(|k| k.ends_with("/documents/1") || k.ends_with("/documents/2")),
+                format!("raw document IDs leaked into labels: {keys:?}"),
+            )
+        },
+    )
+    .await;
+
+    eventually(
         "search latency percentiles are reported",
         Duration::from_secs(30),
         || async {
+            // Typesense computes stats over a short rolling window, so send
+            // fresh searches on every attempt.
+            for q in ["shoes", "jacket", "boots"] {
+                search(1, "e2e_products", q, false).await?;
+            }
             let samples = scrape(1).await?;
             for key in [
                 "search_95Percentile_latency_ms",
@@ -585,6 +644,7 @@ async fn prometheus_loads_the_alert_rules() {
         [
             "TypesenseExporterDown",
             "TypesenseNoLeader",
+            "TypesenseScrapeFailing",
             "TypesenseUnhealthy"
         ]
     );
@@ -825,6 +885,13 @@ async fn hung_node_and_quorum_loss_raise_no_leader() {
         "scrape of hung node took {took:?} (scrape timeout 4s)"
     );
     assert_eq!(gauge(&samples, "typesense_health"), Some(0.0));
+    assert!(
+        samples
+            .iter()
+            .filter(|s| s.name == "typesense_scrape_success")
+            .all(|s| s.value == 0.0),
+        "every endpoint of the hung node is reported as failed"
+    );
 
     eventually(
         "all exporters still scraped",

@@ -111,16 +111,30 @@ max by (collection) (typesense_collection_documents)
 delta(typesense_collection_documents{host="typesense-1"}[1h]) > 10000
 ```
 
+## Scrape health
+
+| Metric | Extra labels | Values |
+|---|---|---|
+| `typesense_scrape_success` | `endpoint` | `1` if the exporter fetched and parsed that Typesense endpoint (`/metrics.json`, `/stats.json`, `/health`, `/debug`, `/status`, `/collections`) on this scrape, otherwise `0` |
+| `typesense_scrape_duration_seconds` | | Time taken to query all six endpoints |
+
+```promql
+# Endpoints the exporter can't read on a healthy node (permissions, version)
+typesense_scrape_success{endpoint!="/health"} == 0 unless on (host, port) typesense_health == 0
+```
+
 ## Per endpoint and per collection
 
 | Metric | Extra labels |
 |---|---|
 | `typesense_stats_latency_ms` | `key`, e.g. `"GET /collections/products/documents/search"` |
 | `typesense_stats_requests_per_second` | `key` |
-| `typesense_stats_latency_ms_by_collection` | `key`, `method`, `collection_name`, `action` |
-| `typesense_stats_requests_per_second_by_collection` | `key`, `method`, `collection_name`, `action` |
+| `typesense_stats_latency_ms_by_collection` | `method`, `collection_name`, `action` |
+| `typesense_stats_requests_per_second_by_collection` | `method`, `collection_name`, `action` |
 
-The `_by_collection` variants only include endpoints of the form `METHOD /collections/<name>/<a>/<b>`. For example, `GET /collections/products/documents/search` gives `method="GET"`, `collection_name="products"`, `action="documents/search"`.
+Typesense names these entries after the request path, **including document and other resource IDs** (`GET /collections/products/documents/41`). The exporter replaces IDs with `:id`, so the number of series stays bounded: `GET /collections/products/documents/:id`. Entries that collapse to the same endpoint are merged. Request rates are summed, and latency is averaged, weighted by each entry's request rate. Collection names, and the actions `search`, `import` and `export`, are kept.
+
+The `_by_collection` variants cover endpoints under a collection, `METHOD /collections/<name>/<action>`. For example, `GET /collections/products/documents/search` gives `method="GET"`, `collection_name="products"`, `action="documents/search"`; a read by ID gives `action="documents/:id"`.
 
 ```promql
 # Search rate per collection across the cluster

@@ -54,7 +54,7 @@ open http://localhost:3000        # Grafana: admin / admin
 docker run -d -p 8888:8888 \
   -e TYPESENSE_HOST=typesense-1.internal \
   -e TYPESENSE_API_KEY=<admin-api-key> \
-  imatefx/typesense-prometheus-exporter:v0.3.1
+  imatefx/typesense-prometheus-exporter:v0.4.0
 
 curl -s localhost:8888/metrics | grep -E '^typesense_(health|raft_state)'
 ```
@@ -66,10 +66,10 @@ Then add the exporters to Prometheus, and import the [dashboards](grafana/) and 
 | Flag | Environment variable | Default |
 |---|---|---|
 | `--typesense-host` | `TYPESENSE_HOST` | *(required)* |
-| `--typesense-api-key` | `TYPESENSE_API_KEY` | *(required)* |
+| `--typesense-api-key` / `--typesense-api-key-file` | `TYPESENSE_API_KEY` / `TYPESENSE_API_KEY_FILE` | *(one is required)* |
 | `--typesense-port` | `TYPESENSE_PORT` | `8108` |
 | `--typesense-protocol` | `TYPESENSE_PROTOCOL` | `http` |
-| `--typesense-timeout` | `TYPESENSE_TIMEOUT` | `5` seconds; keep it below Prometheus' `scrape_timeout` |
+| `--typesense-timeout` | `TYPESENSE_TIMEOUT` | `5` seconds (`0` disables); keep it below Prometheus' `scrape_timeout` |
 | `--exporter-bind-address` | `EXPORTER_BIND_ADDRESS` | `0.0.0.0` |
 | `--exporter-bind-port` | `EXPORTER_BIND_PORT` | `8888` |
 
@@ -85,6 +85,7 @@ See [configuration](docs/configuration.md) for API key permissions, timeouts, fa
 | `typesense_raft_queued_writes` | Writes waiting to be applied |
 | `typesense_collection_documents{collection=…}` | Documents per collection |
 | `typesense_info{version=…}` | Typesense version of each node |
+| `typesense_scrape_success{endpoint=…}` | Whether each Typesense endpoint could be read, for spotting key or version problems |
 | `typesense_metrics{key=…}` | CPU (per core), disk, memory, swap, network, allocator memory |
 | `typesense_stats{key=…}` | Every numeric `/stats.json` field: requests per second, latency avg/p70/p95/p99/min/max, pending writes, cache hits/misses/ratio |
 | `typesense_stats_*_by_collection` | Requests per second and latency per collection and action |
@@ -98,6 +99,7 @@ See the [metrics reference](docs/metrics.md) for every key, with example PromQL.
 | `TypesenseExporterDown` | Prometheus can't scrape an exporter for 1m |
 | `TypesenseUnhealthy` | A node is unhealthy or unreachable for 1m |
 | `TypesenseNoLeader` | No node is raft leader for 1m. A normal election (a few seconds) doesn't trigger it. |
+| `TypesenseScrapeFailing` | A healthy node has an endpoint the exporter can't read for 5m (API key permissions, older Typesense) |
 
 ## Dashboards
 
@@ -139,7 +141,7 @@ make up / down    # start / stop the Docker Compose stack
 ./build-cross.sh  # static linux/amd64 + linux/arm64 binaries
 ```
 
-There are 44 tests in three layers. **Unit** and **integration** tests run against a mock Typesense. **End-to-end** tests run against a real cluster and break it on purpose: leader failover, a hung node, quorum loss. See [testing](docs/testing.md) for the full list.
+There are 56 tests in three layers. **Unit** and **integration** tests run against a mock Typesense. **End-to-end** tests run against a real cluster and break it on purpose: leader failover, a hung node, quorum loss. See [testing](docs/testing.md) for the full list.
 
 ## Contributors
 

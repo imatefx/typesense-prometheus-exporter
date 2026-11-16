@@ -71,6 +71,10 @@ A fresh registry on every scrape means a metric that disappears from Typesense a
 
 **Export every numeric stat.** `/stats.json` keeps gaining fields (latency percentiles and min/max, cache counters). The model captures all top-level fields and exports every numeric one, so new Typesense versions need no exporter change.
 
+**Bounded labels.** Typesense's per-endpoint stats include document and other resource IDs in the path. Exported as-is, every document read by ID would create new series. Endpoints are normalised to `…/documents/:id` before export, and the by-collection metrics don't repeat the raw endpoint, so the number of series depends on collections and routes, not on data.
+
+**Visible partial failures.** Each scrape reports `typesense_scrape_success` per endpoint and the scrape duration. A wrong API key or an endpoint missing on an older Typesense is then something you can alert on, not just a log line.
+
 **Per-core CPU by pattern.** `/metrics.json` has one `system_cpuN_active_percentage` key per core. The model captures unknown keys with `#[serde(flatten)]` and exports those matching `system_cpu<digits>_active_percentage`, so any core count works.
 
 **Per-collection metrics from endpoint keys.** `/stats.json` reports latency and request rate keyed by endpoint, e.g. `GET /collections/products/documents/search`. A regex splits collection endpoints into `method`, `collection_name` and `action` labels. The original endpoint string is kept as the `key` label, so series never collide.
@@ -100,9 +104,9 @@ flowchart TB
 
 | Artifact | How |
 |---|---|
-| Docker image | Multi-stage [`Dockerfile`](../Dockerfile): Rust 1.88 on Alpine builds a static musl binary, and the final image is `FROM scratch` with CA certificates. |
+| Docker image | Multi-stage [`Dockerfile`](../Dockerfile): Rust 1.88 on Alpine builds a static musl binary, with cached dependencies. The final image is `FROM scratch` with CA certificates, running as the unprivileged user `65534`. |
 | Multi-arch image on Docker Hub | [`docker.yml`](../.github/workflows/docker.yml) runs on every version tag (`vX.Y.Z`): it builds linux/amd64 + linux/arm64, pushes `:vX.Y.Z` and `:latest`, and attests the build. Pull requests that touch the image get an amd64 test build. |
 | Static Linux binaries | [`build-cross.sh`](../build-cross.sh) runs buildx and writes `releases/*-linux-{amd64,arm64}-musl` |
 | Release binaries | [`rust.yml`](../.github/workflows/rust.yml) builds Linux, macOS and Windows targets on tags and creates the GitHub release, with notes taken from `CHANGELOG.md` and a `SHA256SUMS` file |
 
-**Releasing** is a version bump in `Cargo.toml`, a dated `CHANGELOG.md` section, and a pushed `vX.Y.Z` tag. Both workflows run from the tag.
+**Releasing** is a version bump in `Cargo.toml`, a dated `CHANGELOG.md` section, and a pushed `vX.Y.Z` tag. Both workflows run from the tag. Each first runs the tests and publishes nothing if they fail.
