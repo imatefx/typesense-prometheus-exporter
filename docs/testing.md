@@ -4,8 +4,8 @@ Three layers, from fast and isolated to slow and real:
 
 | Layer | Where | Runs against | Count | Time | Needs |
 |---|---|---|---|---|---|
-| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 28 | < 1s | Rust |
-| Integration | [`tests/exporter.rs`](../tests/exporter.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 20 | ~1s | Rust |
+| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 48 | < 1s | Rust |
+| Integration | [`tests/exporter.rs`](../tests/exporter.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 24 | ~1s | Rust |
 | End-to-end | [`tests/e2e.rs`](../tests/e2e.rs) | A real 3-node Typesense cluster, exporters, Prometheus and Grafana in Docker | 8 | ~3–5 min | Rust, Docker |
 
 ```bash
@@ -21,15 +21,19 @@ A plain `cargo test` runs unit and integration tests only. The e2e tests sit beh
 
 ## Unit tests
 
+Unit tests build a `Scrape` by hand. `Scrape::default()` uses the default `--metric-names=v1`; tests about the 0.4 output set `metric_names: MetricNames::Legacy` (marked **legacy** below) or `Both`.
+
 ### Metric rendering: `src/prometheus_exp.rs`
+
+Shared behaviour and the 0.4 names:
 
 | Test | Verifies |
 |---|---|
 | `parses_collection_endpoint` | `GET /collections/books/documents/search` splits into method, collection and action; `GET /health` doesn't match |
-| `exports_all_metric_families` | A full scrape renders every family with the right labels. Per-core CPU covers any core count (core 16). Unnumbered keys, unreported keys and unknown fields are left out. Swap, cache hit ratio, health and raft state are present. |
-| `failed_endpoints_are_omitted_not_zeroed` | With nothing fetched, `typesense_metrics` and `typesense_stats` are absent; health and raft state are 0 |
+| `exports_all_metric_families` | **legacy.** A full scrape renders every 0.4 family with the right labels. Per-core CPU covers any core count (core 16). Unnumbered keys, unreported keys and unknown fields are left out. Swap, cache hit ratio, health and raft state are present. |
+| `failed_endpoints_are_omitted_not_zeroed` | **both.** With nothing fetched, every 0.4 and 1.0 `/metrics.json` and `/stats.json` family and `typesense_unmapped` are absent; health and raft state are 0 |
 | `unknown_raft_states_are_reported_as_zero` | Raft state 1 → 1 and 4 → 4; any other state → 0 |
-| `unparseable_values_are_omitted` | A non-numeric value (`"n/a"`) in `/metrics.json` or a per-endpoint stat is left out, not exported as 0 |
+| `unparseable_values_are_omitted` | **legacy.** A non-numeric value (`"n/a"`) in `/metrics.json` or a per-endpoint stat is left out, not exported as 0 |
 | `normalizes_resource_ids_but_keeps_collections_and_actions` | Document, synonym, key, alias and set IDs become `:id`; collection names, `search`/`import`/`export` and query strings are handled |
 | `merged_endpoints_sum_rates_and_weight_latency` | Entries that collapse to one endpoint sum their request rates and average latency weighted by rate |
 | `exports_scrape_health` | `typesense_scrape_success{endpoint}` and `typesense_scrape_duration_seconds` are rendered |
@@ -38,7 +42,27 @@ A plain `cargo test` runs unit and integration tests only. The e2e tests sit beh
 | `exports_version_replication_and_collection_documents` | `typesense_info{version}`, committed index, queued writes and per-collection document counts are rendered; collections without a count are skipped |
 | `new_families_are_omitted_when_their_endpoint_failed` | No `/debug`, `/status` or `/collections` data means no info, raft index, queued writes or document metrics |
 | `status_fields_missing_from_older_typesense_are_omitted` | A `/status` without `committed_index` or `queued_writes` doesn't produce fake zeros |
-| `exports_latency_percentiles_and_cache_counts` | p95/p99, max latency and cache hit/miss counts are exported as `typesense_stats` keys |
+| `exports_latency_percentiles_and_cache_counts` | **legacy.** p95/p99, max latency and cache hit/miss counts are exported as `typesense_stats` keys |
+
+The 1.0 names ([design](metrics-v1.md)) and the `--metric-names` modes:
+
+| Test | Verifies |
+|---|---|
+| `default_mode_is_v1` | `Scrape::default()` uses the 1.0 names |
+| `maps_every_metrics_json_field` | Every `/metrics.json` field lands in its 1.0 family with the expected value: CPU and per-core CPU as ratios, memory, swap, disk, network and allocator values; only the unknown fields go to `typesense_unmapped` |
+| `maps_every_stats_json_field` | Every `/stats.json` scalar lands in its 1.0 family: per-operation rates and average latency, all and overloaded rates, the latency quantiles (min is `quantile="0"`, max `quantile="1"`), pending write batches and cache counts; `total` is not an `operation` label |
+| `maps_every_quantile_for_every_operation` | Every quantile field of every operation maps to `typesense_request_latency_seconds{operation,quantile}`, converted to seconds, with nothing unmapped |
+| `maps_routes_and_collections` | Per-route latency and rate become `typesense_route_*{route}` and `typesense_collection_*{collection,method,action}`; non-collection routes stay out of the collection families; no `collection_name` or `endpoint` labels |
+| `merged_routes_keep_the_normalisation_in_v1` | Document IDs still collapse to `:id` with summed rates and rate-weighted latency |
+| `converts_to_base_units` | Milliseconds become seconds and percentages become ratios; ratios, bytes and rates are passed through |
+| `network_bytes_are_counters_and_the_rest_gauges` | The two network byte families are counters (`_total`); every other 1.0 family is a gauge |
+| `negative_or_unparseable_counters_are_omitted` | A negative or non-numeric network counter is left out, not exported or sent to `typesense_unmapped` |
+| `unknown_numeric_fields_fall_back_to_unmapped` | Numeric fields without a 1.0 name become `typesense_unmapped{source,key}` with the raw value; non-numeric and null fields are left out |
+| `unmapped_is_only_emitted_with_v1_names` | `typesense_unmapped` appears in `v1` and `both`, never in `legacy` |
+| `v1_families_are_omitted_not_zeroed` | Failed endpoints, missing fields and non-numeric values produce no 1.0 series; health and raft state are still 0 |
+| `each_mode_emits_only_its_names` | `v1` has only the 1.0 families, `legacy` only the 0.4 ones, `both` has all of them |
+| `unchanged_families_are_emitted_once_in_every_mode` | Health, raft, info, documents and scrape-health families appear exactly once in every mode |
+| `both_mode_keeps_legacy_output_byte_for_byte` | Every `legacy` line, `# HELP` and `# TYPE` included, appears unchanged in `both`; `legacy` has the 0.4 shape |
 
 ### Models: `src/typesense/models/`
 
@@ -46,6 +70,8 @@ A plain `cargo test` runs unit and integration tests only. The e2e tests sit beh
 |---|---|
 | `exports_every_numbered_core` | All 32 cores of a 32-core host are exported |
 | `ignores_non_core_and_non_string_values` | `system_cpuX_…`, keys with extra suffixes, non-string values and unrelated keys are not exported as cores |
+| `recognises_core_numbers` | `core_number` returns the core of `system_cpu12_active_percentage` and nothing for the overall CPU, `cpuX`, suffixed or unrelated keys |
+| `fixed_entries_leave_out_cores_and_unknown_fields` | `fixed_entries()` gives only the fixed `/metrics.json` fields, not per-core values or unknown keys |
 | `unreported_metrics_are_skipped` | Only the keys Typesense sent are exported; `{}` exports nothing |
 | `exports_every_numeric_field` | Every numeric `/stats.json` field is exported: averages, percentiles, max, cache counts, and fields the exporter has never seen |
 | `unreported_null_and_non_numeric_fields_are_omitted` | `null`, strings and missing fields are left out instead of becoming 0 |
@@ -56,31 +82,36 @@ A plain `cargo test` runs unit and integration tests only. The e2e tests sit beh
 
 | Test | Verifies |
 |---|---|
-| `applies_defaults` | Defaults: protocol `http`, port 8108, bind `0.0.0.0:8888`, timeout 5s |
+| `applies_defaults` | Defaults: protocol `http`, port 8108, bind `0.0.0.0:8888`, timeout 5s, metric names `v1` |
 | `accepts_overrides` | Every flag overrides its default |
 | `rejects_invalid_port_and_negative_timeout` | Port 99999 and a negative timeout are rejected |
 | `requires_exactly_one_key_source` | One of `--typesense-api-key` / `--typesense-api-key-file` is required, and not both |
 | `reads_and_trims_the_key_file` | The key file is read and trimmed; an empty or missing file is an error |
 | `never_prints_the_key` | Debug output redacts the key, and `--help` hides its environment value |
 | `flags_plaintext_keys_to_remote_hosts` | Plain HTTP to a remote host is flagged; localhost and HTTPS are not |
+| `parses_metric_names` | `--metric-names` accepts `v1`, `both` and `legacy` and rejects anything else |
+| `metric_names_select_the_name_sets` | `v1` selects the 1.0 names, `legacy` the 0.4 names, `both` both |
+| `metric_names_reads_its_environment_variable` | `--metric-names` is also read from `TYPESENSE_METRIC_NAMES` |
 
 ## Integration tests: `tests/exporter.rs`
 
 Each test starts a [wiremock](https://docs.rs/wiremock) server playing a Typesense node, using fixtures shaped like real responses ([`tests/fixtures/`](../tests/fixtures)). It then serves the real exporter router on an ephemeral port and scrapes it over HTTP. The mocks only answer requests that carry the API key.
 
+The exporter runs with the default `--metric-names=v1` unless a test says otherwise. "The `/metrics.json` families" and "the `/stats.json` families" mean the 1.0 families those endpoints feed (`has_metrics_json` / `has_stats_json` in the test file).
+
 | Test | Scenario | Expected |
 |---|---|---|
-| `healthy_leader_exports_everything` | All six endpoints OK, raft leader | 200; health 1, raft 1, system, swap, cache and per-collection metrics |
+| `healthy_leader_exports_everything` | All six endpoints OK, raft leader | 200; health 1, raft 1, 1.0 system, swap, per-core CPU, cache and per-collection metrics; no 0.4 names |
 | `follower_reports_raft_state_four` | `/debug` reports state 4 | `typesense_raft_state 4` |
 | `sends_api_key_to_typesense` | Count the requests | Exactly 6 requests, one per endpoint, each with `X-TYPESENSE-API-KEY`; `/collections` asks Typesense to leave out schemas |
-| `unreachable_typesense_reports_unhealthy_and_omits_metrics` | Nothing listening on the port | 200; health 0, raft 0, no `typesense_metrics` or `typesense_stats` |
-| `unauthorized_endpoints_are_omitted` | 401 on metrics, stats and debug; health OK | Health 1, raft 0, metrics and stats omitted |
+| `unreachable_typesense_reports_unhealthy_and_omits_metrics` | Nothing listening on the port | 200; health 0, raft 0, the `/metrics.json` and `/stats.json` families absent |
+| `unauthorized_endpoints_are_omitted` | 401 on metrics, stats and debug; health OK | Health 1, raft 0, the `/metrics.json` and `/stats.json` families absent |
 | `unhealthy_node_reports_zero_health` | `/health` returns 503 `{"ok": false}` | Health 0 |
 | `health_ok_false_with_200_is_unhealthy` | `/health` returns 200 `{"ok": false}` | Health 0 |
-| `malformed_response_only_drops_that_endpoint` | `/metrics.json` returns invalid JSON | Only `typesense_metrics` is missing; stats and health are present |
+| `malformed_response_only_drops_that_endpoint` | `/metrics.json` returns invalid JSON | Only the `/metrics.json` families are absent; the `/stats.json` families and health are present |
 | `timeout_bounds_a_hung_typesense` | Every endpoint takes 10s; timeout 1s | Answers in under 5s, health 0 |
 | `zero_timeout_means_no_timeout` | `TYPESENSE_TIMEOUT=0` | Requests succeed (0 disables the timeout instead of failing everything) |
-| `exports_version_replication_documents_and_percentiles` | Typesense 30.1-shaped responses from all six endpoints | Version, committed index, queued writes, documents per collection, latency percentiles and cache counts |
+| `exports_version_replication_documents_and_percentiles` | Typesense 30.1-shaped responses from all six endpoints | Version, committed index, queued writes, documents per collection, latency quantiles and cache counts |
 | `older_typesense_without_status_still_exports_the_rest` | `/status` returns 404 and `/debug` has no version | Only the raft index and info metrics disappear; everything else is exported |
 | `root_points_to_metrics` | `GET /` | Mentions `/metrics` |
 | `serve_runs_the_exporter_on_a_given_listener` | `server::serve` on a pre-bound listener (no port race) | Serves `/metrics` |
@@ -90,6 +121,10 @@ Each test starts a [wiremock](https://docs.rs/wiremock) server playing a Typesen
 | `reads_the_api_key_from_a_file` | Key supplied with `TYPESENSE_API_KEY_FILE` | Requests carry the key from the file |
 | `startup_fails_without_a_readable_key_file` | Key file missing | `server::router` returns an error |
 | `run_fails_when_the_port_is_taken` | Bind port already in use | `run` returns `AddrInUse` instead of panicking |
+| `v1_names_are_the_default_with_base_units_and_counters` | Default settings, healthy node | Every 1.0 family and no 0.4 family; network bytes are counters; values in seconds and ratios; nothing in `typesense_unmapped` |
+| `legacy_names_reproduce_the_0_4_output` | `--metric-names=legacy` | Every 0.4 family with the 0.4 keys and labels, no 1.0 family, no `typesense_unmapped`, only gauges |
+| `both_names_emit_old_and_new_and_shared_families_once` | `--metric-names=both` | Both name sets; shared families (health, raft, info, documents, scrape health) once; every 0.4 series identical to `legacy` |
+| `v1_unknown_fields_fall_back_to_unmapped` | Fields with no 1.0 name in `/metrics.json` and `/stats.json` | `typesense_unmapped{source,key}` with the raw value; fields Typesense didn't send are absent |
 
 **Checking that the tests catch bugs.** The suite was checked by breaking the code on purpose:
 - Removing the API key header failed 5 tests.
@@ -97,15 +132,15 @@ Each test starts a [wiremock](https://docs.rs/wiremock) server playing a Typesen
 
 ## End-to-end tests: `tests/e2e.rs`
 
-These run against the [Docker Compose stack](architecture.md#docker-compose-stack): three Typesense 30.1 nodes peering by fixed IP, one exporter per node, Prometheus with the alert rules, and Grafana with the dashboards provisioned.
+These run against the [Docker Compose stack](architecture.md#docker-compose-stack): three Typesense 30.1 nodes peering by fixed IP, one exporter per node (with `TYPESENSE_METRIC_NAMES=v1`), Prometheus with the alert rules, and Grafana with the dashboards provisioned. The checks use the 1.0 names.
 
 | Test | What it does | Checks |
 |---|---|---|
-| `cluster_has_one_leader_and_two_followers` | Reads every exporter and Prometheus | All nodes healthy; roles are one leader and two followers; each exporter reports only its own node; system metrics, Typesense version, committed raft index and queued writes from every node; every exporter reads all six endpoints (`typesense_scrape_success` 1); all 3 exporters scraped |
-| `traffic_is_reported_by_the_node_that_served_it` | Creates a collection through node 1 and searches every node, some searches with `use_cache=true` | Documents replicate to every node; every exporter reports 3 documents in the collection; reads by document ID show up as one `documents/:id` series, never raw IDs; each exporter reports the search traffic its own node served; search p95/p99/max latency reported; `cache_hit_ratio` goes above 0 |
+| `cluster_has_one_leader_and_two_followers` | Reads every exporter and Prometheus | All nodes healthy; roles are one leader and two followers; each exporter reports only its own node; 1.0 system metrics (`typesense_system_memory_total_bytes`) and no 0.4 `typesense_metrics`/`typesense_stats`; Typesense version, committed raft index and queued writes from every node; every exporter reads all six endpoints (`typesense_scrape_success` 1); all 3 exporters scraped |
+| `traffic_is_reported_by_the_node_that_served_it` | Creates a collection through node 1 and searches every node, some searches with `use_cache=true` | Documents replicate to every node; every exporter reports 3 documents in the collection; reads by document ID show up as one `typesense_route_requests_per_second` series with `documents/:id`, never raw IDs; each exporter reports the search traffic its own node served; `typesense_request_latency_seconds` reports search quantiles 0.95, 0.99 and 1 (max); `cache_hit_ratio` goes above 0 |
 | `followers_catch_up_and_replication_lag_returns_to_zero` | Writes 20 documents through node 1 | Every node's committed raft index moves past the writes; replication lag (max − min committed index) returns to 0; every node reports 23 documents |
 | `prometheus_loads_the_alert_rules` | Reads Prometheus rules and alerts | All four rules loaded; no alerts while the cluster is healthy |
-| `grafana_dashboards_show_every_node` | Queries Grafana's data source, the same path the panels use | Data source healthy; all four dashboards provisioned; per-core CPU, raft state and health return data for all three nodes |
+| `grafana_dashboards_show_every_node` | Queries Grafana's data source, the same path the panels use | Data source healthy; all four dashboards provisioned; per-core CPU (`typesense_system_cpu_core_active_ratio`), network received rate, raft state and health return data for all three nodes |
 | `leader_failure_is_reported_and_a_new_leader_is_elected` | Stops the current leader | Stopped node reports health 0 and raft 0; a different node becomes leader; `TypesenseUnhealthy` goes pending; `TypesenseNoLeader` never fires during the election and clears afterwards |
 | `hung_node_and_quorum_loss_raise_no_leader` | Stops one follower and **pauses** (freezes) the other, so 2 of 3 nodes are gone | The frozen node's exporter answers in under 4s (the scrape timeout), reports health 0 and every endpoint as failed; all exporters still scraped; no node reports leader; `TypesenseNoLeader` goes pending |
 | `parses_exporter_output` | No Docker needed | The test's own Prometheus-format parser handles labels containing spaces |

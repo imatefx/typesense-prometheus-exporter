@@ -4,7 +4,10 @@
 use std::time::{Duration, Instant};
 
 use serde_json::json;
-use typesense_prometheus_exporter::{cli::CliArgs, server};
+use typesense_prometheus_exporter::{
+    cli::{CliArgs, MetricNames},
+    server,
+};
 use wiremock::{
     matchers::{header, method, path},
     Mock, MockServer, ResponseTemplate,
@@ -25,6 +28,7 @@ fn args_for(host: &str, port: u16, timeout: u64) -> CliArgs {
         exporter_bind_address: "127.0.0.1".to_string(),
         exporter_bind_port: 0,
         typesense_timeout: timeout,
+        metric_names: MetricNames::default(),
     }
 }
 
@@ -38,8 +42,14 @@ async fn spawn_exporter(args: CliArgs) -> String {
 }
 
 async fn exporter_for(mock: &MockServer, timeout: u64) -> String {
+    exporter_with_names(mock, timeout, MetricNames::default()).await
+}
+
+async fn exporter_with_names(mock: &MockServer, timeout: u64, names: MetricNames) -> String {
     let addr = mock.address();
-    spawn_exporter(args_for(&addr.ip().to_string(), addr.port(), timeout)).await
+    let mut args = args_for(&addr.ip().to_string(), addr.port(), timeout);
+    args.metric_names = names;
+    spawn_exporter(args).await
 }
 
 async fn scrape(base: &str) -> (u16, String) {
@@ -96,6 +106,22 @@ fn gauge(out: &str, prefix: &str) -> Option<f64> {
         .and_then(|v| v.parse().ok())
 }
 
+/// Whether any `/metrics.json` value was exported under its 1.0 name.
+fn has_metrics_json(out: &str) -> bool {
+    out.contains("typesense_system_") || out.contains("typesense_process_memory_")
+}
+
+/// Whether any `/stats.json` value was exported under its 1.0 name.
+fn has_stats_json(out: &str) -> bool {
+    [
+        "typesense_all_requests_per_second{",
+        "typesense_requests_per_second{",
+        "typesense_route_",
+    ]
+    .iter()
+    .any(|family| out.contains(family))
+}
+
 fn health(out: &str) -> Option<f64> {
     gauge(out, "typesense_health{")
 }
@@ -116,13 +142,17 @@ async fn healthy_leader_exports_everything() {
     assert_eq!(raft(&out), Some(1.0));
     let port = mock.address().port();
     assert!(out.contains(&format!(
-        r#"typesense_metrics{{host="127.0.0.1",key="system_memory_total_swap_bytes",port="{port}"}} 1073741824"#
+        r#"typesense_system_swap_total_bytes{{host="127.0.0.1",port="{port}"}} 1073741824"#
     )));
-    assert!(out.contains(r#"key="system_cpu2_active_percentage""#));
-    assert!(out.contains(r#"key="cache_hit_ratio""#));
+    assert!(out.contains(r#"typesense_system_cpu_core_active_ratio{core="2","#));
+    assert!(out.contains("typesense_cache_hit_ratio{"));
     assert!(out.contains(
-        r#"typesense_stats_requests_per_second_by_collection{action="documents/search",collection_name="products""#
+        r#"typesense_collection_requests_per_second{action="documents/search",collection="products""#
     ));
+    assert!(
+        !out.contains("typesense_metrics{") && !out.contains("typesense_stats"),
+        "v1 is the default, so no 0.4 names"
+    );
 }
 
 #[tokio::test]
@@ -138,13 +168,13 @@ async fn follower_reports_raft_state_four() {
 #[tokio::test]
 async fn sends_api_key_to_typesense() {
     // Every mock route requires the API key; a missing header would 404 and
-    // leave typesense_metrics out of the response.
+    // leave the /metrics.json families out of the response.
     let mock = healthy_node(1).await;
     let base = exporter_for(&mock, 0).await;
 
     let (_, out) = scrape(&base).await;
 
-    assert!(out.contains("typesense_metrics{"));
+    assert!(out.contains("typesense_system_memory_total_bytes{"));
     let requests = mock.received_requests().await.unwrap();
     assert_eq!(requests.len(), 6, "one request per Typesense endpoint");
     assert!(requests
@@ -173,8 +203,8 @@ async fn unreachable_typesense_reports_unhealthy_and_omits_metrics() {
     assert_eq!(status, 200);
     assert_eq!(health(&out), Some(0.0));
     assert_eq!(raft(&out), Some(0.0));
-    assert!(!out.contains("typesense_metrics{"));
-    assert!(!out.contains("typesense_stats{"));
+    assert!(!has_metrics_json(&out));
+    assert!(!has_stats_json(&out));
 }
 
 #[tokio::test]
@@ -196,8 +226,8 @@ async fn unauthorized_endpoints_are_omitted() {
     assert_eq!(status, 200);
     assert_eq!(health(&out), Some(1.0));
     assert_eq!(raft(&out), Some(0.0));
-    assert!(!out.contains("typesense_metrics{"));
-    assert!(!out.contains("typesense_stats{"));
+    assert!(!has_metrics_json(&out));
+    assert!(!has_stats_json(&out));
 }
 
 #[tokio::test]
@@ -255,8 +285,8 @@ async fn malformed_response_only_drops_that_endpoint() {
 
     let (_, out) = scrape(&base).await;
 
-    assert!(!out.contains("typesense_metrics{"));
-    assert!(out.contains("typesense_stats{"));
+    assert!(!has_metrics_json(&out));
+    assert!(has_stats_json(&out));
     assert_eq!(health(&out), Some(1.0));
 }
 
@@ -279,7 +309,7 @@ async fn timeout_bounds_a_hung_typesense() {
         started.elapsed()
     );
     assert_eq!(health(&out), Some(0.0));
-    assert!(!out.contains("typesense_metrics{"));
+    assert!(!has_metrics_json(&out));
 }
 
 #[tokio::test]
@@ -326,7 +356,7 @@ async fn zero_timeout_means_no_timeout() {
     let (_, out) = scrape(&base).await;
 
     assert_eq!(health(&out), Some(1.0));
-    assert!(out.contains("typesense_metrics{"));
+    assert!(has_metrics_json(&out));
 }
 
 #[tokio::test]
@@ -348,12 +378,12 @@ async fn exports_version_replication_documents_and_percentiles() {
             r#"typesense_collection_documents{{collection="articles",host="127.0.0.1",port="{port}"}} 37"#
         ),
         format!(
-            r#"typesense_stats{{host="127.0.0.1",key="search_99Percentile_latency_ms",port="{port}"}} 4"#
+            r#"typesense_request_latency_seconds{{host="127.0.0.1",operation="search",port="{port}",quantile="0.99"}} 0.004"#
         ),
         format!(
-            r#"typesense_stats{{host="127.0.0.1",key="import_max_latency_ms",port="{port}"}} 7"#
+            r#"typesense_request_latency_seconds{{host="127.0.0.1",operation="import",port="{port}",quantile="1"}} 0.007"#
         ),
-        format!(r#"typesense_stats{{host="127.0.0.1",key="cache_miss_count",port="{port}"}} 15"#),
+        format!(r#"typesense_cache_misses{{host="127.0.0.1",port="{port}"}} 15"#),
     ] {
         assert!(out.contains(&line), "missing {line}");
     }
@@ -391,7 +421,7 @@ async fn older_typesense_without_status_still_exports_the_rest() {
         "no version reported, so no info metric"
     );
     assert!(out.contains("typesense_collection_documents{"));
-    assert!(out.contains("typesense_metrics{"));
+    assert!(has_metrics_json(&out));
     assert_eq!(health(&out), Some(1.0));
 }
 
@@ -493,10 +523,10 @@ async fn document_ids_do_not_create_new_series() {
 
     let rps_lines: Vec<&str> = out
         .lines()
-        .filter(|l| l.starts_with("typesense_stats_requests_per_second{"))
+        .filter(|l| l.starts_with("typesense_route_requests_per_second{"))
         .collect();
     assert_eq!(rps_lines.len(), 2, "{rps_lines:#?}");
-    assert!(out.contains(r#"key="GET /collections/products/documents/:id",port="#));
+    assert!(out.contains(r#"route="GET /collections/products/documents/:id"}"#));
     assert!(
         rps_lines
             .iter()
@@ -505,12 +535,12 @@ async fn document_ids_do_not_create_new_series() {
     );
     let by_collection: Vec<&str> = out
         .lines()
-        .filter(|l| l.starts_with("typesense_stats_requests_per_second_by_collection{"))
+        .filter(|l| l.starts_with("typesense_collection_requests_per_second{"))
         .collect();
     assert_eq!(by_collection.len(), 2, "{by_collection:#?}");
     assert!(
-        by_collection.iter().all(|l| !l.contains("key=")),
-        "no duplicated key label"
+        by_collection.iter().all(|l| !l.contains("route=")),
+        "no duplicated route label"
     );
     assert!(by_collection
         .iter()
@@ -531,7 +561,7 @@ async fn reads_the_api_key_from_a_file() {
     std::fs::remove_file(&path).unwrap();
 
     // The mocks only answer requests carrying the key.
-    assert!(out.contains("typesense_metrics{"));
+    assert!(has_metrics_json(&out));
     assert_eq!(scrape_success(&out, "/stats.json"), Some(1.0));
 }
 
@@ -542,4 +572,230 @@ async fn startup_fails_without_a_readable_key_file() {
     args.typesense_api_key_file = Some("/nonexistent/typesense-key".into());
 
     assert!(server::router(&args).is_err());
+}
+
+/// Families that only exist under the 0.4 names.
+const LEGACY_FAMILIES: &[&str] = &[
+    "typesense_metrics",
+    "typesense_stats",
+    "typesense_stats_latency_ms",
+    "typesense_stats_requests_per_second",
+    "typesense_stats_latency_ms_by_collection",
+    "typesense_stats_requests_per_second_by_collection",
+];
+
+/// A sample of families that only exist under the 1.0 names.
+const V1_FAMILIES: &[&str] = &[
+    "typesense_system_cpu_active_ratio",
+    "typesense_system_cpu_core_active_ratio",
+    "typesense_system_network_received_bytes_total",
+    "typesense_process_memory_resident_bytes",
+    "typesense_requests_per_second",
+    "typesense_all_requests_per_second",
+    "typesense_request_latency_avg_seconds",
+    "typesense_request_latency_seconds",
+    "typesense_cache_hit_ratio",
+    "typesense_route_latency_seconds",
+    "typesense_collection_requests_per_second",
+];
+
+fn has_family(out: &str, family: &str) -> bool {
+    out.contains(&format!("# TYPE {family} "))
+}
+
+fn assert_close(out: &str, series: &str, expected: f64) {
+    let got = gauge(out, &format!("{series} ")).unwrap_or_else(|| panic!("missing {series}"));
+    assert!(
+        (got - expected).abs() < 1e-12,
+        "{series}: got {got}, want {expected}"
+    );
+}
+
+#[tokio::test]
+async fn v1_names_are_the_default_with_base_units_and_counters() {
+    let mock = healthy_node(1).await;
+    let base = exporter_for(&mock, 0).await;
+
+    let (status, out) = scrape(&base).await;
+
+    assert_eq!(status, 200);
+    let port = mock.address().port();
+    let t = format!(r#"host="127.0.0.1",port="{port}""#);
+    for family in V1_FAMILIES {
+        assert!(has_family(&out, family), "missing {family}");
+    }
+    for family in LEGACY_FAMILIES {
+        assert!(!has_family(&out, family), "unexpected {family}");
+    }
+    assert!(out.contains("# TYPE typesense_system_network_received_bytes_total counter"));
+    assert!(out.contains("# TYPE typesense_system_network_sent_bytes_total counter"));
+    assert_close(
+        &out,
+        &format!("typesense_system_network_received_bytes_total{{{t}}}"),
+        1466.0,
+    );
+    assert_close(
+        &out,
+        &format!("typesense_system_cpu_active_ratio{{{t}}}"),
+        0.0455,
+    );
+    assert_close(
+        &out,
+        &format!(r#"typesense_system_cpu_core_active_ratio{{core="1",{t}}}"#),
+        0.0909,
+    );
+    assert_close(
+        &out,
+        &format!(
+            r#"typesense_request_latency_avg_seconds{{host="127.0.0.1",operation="import",port="{port}"}}"#
+        ),
+        0.0025,
+    );
+    assert_close(
+        &out,
+        &format!(
+            r#"typesense_requests_per_second{{host="127.0.0.1",operation="search",port="{port}"}}"#
+        ),
+        3.4,
+    );
+    assert_close(
+        &out,
+        &format!("typesense_all_requests_per_second{{{t}}}"),
+        3.6,
+    );
+    assert_close(
+        &out,
+        &format!(r#"typesense_route_latency_seconds{{{t},route="GET /health"}}"#),
+        0.0001,
+    );
+    assert!(
+        !out.contains("typesense_unmapped"),
+        "every fixture field has a 1.0 name"
+    );
+}
+
+#[tokio::test]
+async fn legacy_names_reproduce_the_0_4_output() {
+    let mock = healthy_node(1).await;
+    let base = exporter_with_names(&mock, 0, MetricNames::Legacy).await;
+
+    let (status, out) = scrape(&base).await;
+
+    assert_eq!(status, 200);
+    for family in LEGACY_FAMILIES {
+        assert!(has_family(&out, family), "missing {family}");
+    }
+    for family in V1_FAMILIES {
+        assert!(!has_family(&out, family), "unexpected {family}");
+    }
+    assert!(!out.contains("typesense_unmapped"));
+    assert!(!out.contains(" counter\n"), "0.4 exported only gauges");
+    let port = mock.address().port();
+    for line in [
+        format!(
+            r#"typesense_metrics{{host="127.0.0.1",key="system_memory_total_swap_bytes",port="{port}"}} 1073741824"#
+        ),
+        format!(
+            r#"typesense_metrics{{host="127.0.0.1",key="system_cpu2_active_percentage",port="{port}"}} 0"#
+        ),
+        format!(r#"typesense_stats{{host="127.0.0.1",key="cache_hit_ratio",port="{port}"}} 0.25"#),
+        format!(
+            r#"typesense_stats{{host="127.0.0.1",key="search_99Percentile_latency_ms",port="{port}"}} 4"#
+        ),
+        format!(
+            r#"typesense_stats_requests_per_second_by_collection{{action="documents/search",collection_name="products",host="127.0.0.1",method="GET",port="{port}"}} 3.4"#
+        ),
+    ] {
+        assert!(out.contains(&line), "missing {line}");
+    }
+    assert_eq!(health(&out), Some(1.0));
+    assert!(out.contains("typesense_collection_documents{"));
+}
+
+#[tokio::test]
+async fn both_names_emit_old_and_new_and_shared_families_once() {
+    let mock = healthy_node(1).await;
+    let both = exporter_with_names(&mock, 0, MetricNames::Both).await;
+    let legacy = exporter_with_names(&mock, 0, MetricNames::Legacy).await;
+
+    let (status, out) = scrape(&both).await;
+    let (_, legacy_out) = scrape(&legacy).await;
+
+    assert_eq!(status, 200);
+    for family in LEGACY_FAMILIES.iter().chain(V1_FAMILIES) {
+        assert!(has_family(&out, family), "missing {family}");
+    }
+    for family in [
+        "typesense_health",
+        "typesense_raft_state",
+        "typesense_info",
+        "typesense_raft_committed_index",
+        "typesense_raft_queued_writes",
+        "typesense_collection_documents",
+        "typesense_scrape_success",
+        "typesense_scrape_duration_seconds",
+    ] {
+        assert_eq!(
+            out.matches(&format!("# TYPE {family} gauge\n")).count(),
+            1,
+            "{family}"
+        );
+    }
+    // The 0.4 series are unchanged next to the new ones.
+    for line in legacy_out.lines().filter(|l| {
+        LEGACY_FAMILIES
+            .iter()
+            .any(|f| l.starts_with(&format!("{f}{{")))
+    }) {
+        assert!(out.lines().any(|l| l == line), "both lacks {line}");
+    }
+}
+
+#[tokio::test]
+async fn v1_unknown_fields_fall_back_to_unmapped() {
+    let mock = MockServer::start().await;
+    mount(
+        &mock,
+        "/metrics.json",
+        json_body(r#"{"system_memory_total_bytes": "1024", "brand_new_gauge": "5"}"#),
+    )
+    .await;
+    mount(
+        &mock,
+        "/stats.json",
+        json_body(r#"{"search_latency_ms": 2, "brand_new_stat": 0.5}"#),
+    )
+    .await;
+    let base = exporter_for(&mock, 0).await;
+
+    let (status, out) = scrape(&base).await;
+
+    assert_eq!(status, 200);
+    let port = mock.address().port();
+    assert_close(
+        &out,
+        &format!(
+            r#"typesense_unmapped{{host="127.0.0.1",key="brand_new_gauge",port="{port}",source="metrics.json"}}"#
+        ),
+        5.0,
+    );
+    assert_close(
+        &out,
+        &format!(
+            r#"typesense_unmapped{{host="127.0.0.1",key="brand_new_stat",port="{port}",source="stats.json"}}"#
+        ),
+        0.5,
+    );
+    assert_close(
+        &out,
+        &format!(
+            r#"typesense_request_latency_avg_seconds{{host="127.0.0.1",operation="search",port="{port}"}}"#
+        ),
+        0.002,
+    );
+    assert!(
+        !out.contains("typesense_system_cpu_active_ratio"),
+        "fields Typesense didn't send are omitted, not zeroed"
+    );
+    assert_eq!(health(&out), Some(0.0), "/health not served");
 }
