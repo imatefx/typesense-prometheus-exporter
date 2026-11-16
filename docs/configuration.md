@@ -48,7 +48,7 @@ Every option can be set as a command-line flag, an environment variable or a [co
 |---|---|---|---|
 | `--typesense-host` | `TYPESENSE_HOST` | *(see description)* | Hostname or IP of the Typesense node served at `/metrics`. Also used as the `host` label on every metric. Optional when `--probe-allowed-targets` or config-file clusters are set; one of the three is required. Without it, `/metrics` answers 404 and you scrape nodes through `/probe`. |
 | `--typesense-api-key` | `TYPESENSE_API_KEY` | *(see description)* | Default API key, required with `--typesense-host` or `--probe-allowed-targets` (as this or the file option); clusters in the config file bring their own. Sent as `X-TYPESENSE-API-KEY`. Never printed: hidden in `--help` and redacted in debug output. See [API key permissions](#api-key-permissions). |
-| `--typesense-api-key-file` | `TYPESENSE_API_KEY_FILE` | | File holding the API key, e.g. a Docker or Kubernetes secret; surrounding whitespace is ignored. Preferred over the flag, which other users can see in the process list. |
+| `--typesense-api-key-file` | `TYPESENSE_API_KEY_FILE` | | File holding the API key, e.g. a Docker or Kubernetes secret; surrounding whitespace is ignored. Re-read when the file changes, see [Rotating keys](#rotating-keys). Preferred over the flag, which other users can see in the process list. |
 | `--typesense-port` | `TYPESENSE_PORT` | `8108` | Typesense API port. Also the `port` label. It is also the default port for `/probe` targets and `--probe-allowed-targets` entries that don't name one. |
 | `--typesense-protocol` | `TYPESENSE_PROTOCOL` | `http` | `http` or `https`. HTTPS uses rustls with the bundled CA certificates. Also the default scheme for `/probe` targets that don't name one. |
 | `--typesense-timeout` | `TYPESENSE_TIMEOUT` | `5` | Seconds allowed for each Typesense request; `0` disables the timeout. See [Timeouts](#timeouts). |
@@ -132,7 +132,7 @@ api_key_env = "TYPESENSE_STAGING_KEY"
 - **Lookup order.** Cluster targets first, always with their cluster's key. Then `probe_allowed_targets` and `typesense_host` with the default key. A target that matches a cluster entry always uses that cluster's key, even with `*` in `probe_allowed_targets`; `*` applies the default key only to targets that match no cluster. The default key is optional when only clusters are configured.
 - **List nodes the way Prometheus targets them.** A target matches a cluster by exact host and port (host names are case-insensitive, a single trailing dot is ignored and IPv6 is compared in canonical form). A different spelling, such as an IP address for the same node, matches no cluster, so with `*` it would get the default key. Use the same names in `targets` and in the Prometheus scrape config.
 - **https per cluster.** A cluster with `protocol = "https"` refuses `http://` targets with a 403. At startup the exporter warns about clusters with `protocol = "http"` and non-local targets, and the first probe of each such node warns again.
-- **Startup.** All keys are read once at startup. A key file or variable that can't be read, or an invalid file, stops the exporter with an error naming the file and cluster, never the key.
+- **Startup.** All keys are read at startup. A key file or variable that can't be read, or an invalid file, stops the exporter with an error naming the file and cluster, never the key. After startup a key file is followed when it changes; see [Rotating keys](#rotating-keys).
 
 The metrics are unchanged: they carry `host` and `port` labels only. To tell clusters apart in Prometheus, add a `cluster` label to the scrape targets:
 
@@ -150,6 +150,16 @@ scrape_configs:
         labels: {cluster: staging}
     # Both jobs use the same relabel_configs as in "Probing several nodes".
 ```
+
+## Rotating keys
+
+A key that comes from a file (`--typesense-api-key-file` / `TYPESENSE_API_KEY_FILE`, `typesense_api_key_file`, or a cluster's `api_key_file`) is re-read when the file changes, so you can rotate it without restarting the exporter, for example by updating a Kubernetes Secret.
+
+- **How a change is noticed.** Before a scrape, the exporter compares the file's modified time and length with the last look, at most once per second per file. Symlinks are followed, so the `..data` link swap that Kubernetes uses for Secret volumes counts as a change. An unchanged file is never re-read.
+- **A good new key** is used from the next request and logged at info as `reloaded the Typesense API key from <path>`. The key is never logged.
+- **A bad new key** (the file is missing, unreadable or empty) is ignored: the exporter keeps the previous key and logs a warning once for each distinct problem, not on every scrape. The next change to the file is tried again. Startup is stricter: a bad key file stops the exporter.
+- **Keys that don't reload.** `--typesense-api-key`, `TYPESENSE_API_KEY` and `api_key_env` are read once at startup; changing them needs a restart.
+- **Order of rotation.** Typesense must accept the new key before the exporter starts sending it. Add the new key to Typesense first, update the file, and remove the old key once the exporter logs the reload. A mounted Kubernetes Secret reaches the pod after the kubelet's sync delay (up to about a minute), and the exporter picks it up within a second of that.
 
 ## API key permissions
 

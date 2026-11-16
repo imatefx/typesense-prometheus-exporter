@@ -15,6 +15,7 @@ use tokio::signal;
 
 use crate::{
     cli::{CliArgs, MetricNames},
+    key::KeySource,
     prometheus_exp::{self, Scrape},
     target::{is_loopback, normalize_host, AllowList, Target},
     typesense::TypesenseClient,
@@ -32,7 +33,7 @@ struct AppState {
     http: reqwest::Client,
     /// For `--typesense-host` and `--probe-allowed-targets`; none when only
     /// the config file's clusters are used.
-    api_key: Option<String>,
+    api_key: Option<KeySource>,
     node: Option<Node>,
     allowed: AllowList,
     /// Clusters with their own key; checked before `allowed`.
@@ -57,7 +58,7 @@ pub fn router(args: &CliArgs) -> std::io::Result<Router> {
     {
         return Err(std::io::Error::other("--typesense-host must not be empty"));
     }
-    let api_key = args.has_key().then(|| args.api_key()).transpose()?;
+    let api_key = args.has_key().then(|| args.key_source()).transpose()?;
     // Never follow redirects: reqwest would resend the API key header to
     // wherever a node (or something impersonating it) redirects.
     let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
@@ -274,7 +275,7 @@ async fn probe_handler(
             if let Ok(t) = Target::parse(&raw, &cluster.protocol, state.default_port) {
                 target = t;
             }
-            (cluster.api_key().to_string(), cluster.protocol.as_str())
+            (cluster.key_source().clone(), cluster.protocol.as_str())
         }
         (None, Some(key)) if state.allowed.allows(&target) => {
             (key.clone(), state.default_scheme.as_str())

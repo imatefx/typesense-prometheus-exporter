@@ -3,6 +3,7 @@ pub mod models;
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 
+use crate::key::KeySource;
 use models::{
     typesense_collection_model::TypesenseCollection, typesense_debug_model::TypesenseDebug,
     typesense_health_model::TypesenseHealth, typesense_metrics_model::TypesenseMetrics,
@@ -13,12 +14,12 @@ use models::{
 pub struct TypesenseClient {
     http: Client,
     base_url: String,
-    api_key: String,
+    api_key: KeySource,
 }
 
 impl TypesenseClient {
     /// `http` is shared by every client so connections are pooled across targets.
-    pub fn new(http: Client, base_url: String, api_key: String) -> Self {
+    pub fn new(http: Client, base_url: String, api_key: KeySource) -> Self {
         Self {
             http,
             base_url,
@@ -55,7 +56,7 @@ impl TypesenseClient {
     /// The key as a header value marked sensitive, so it is never printed if
     /// requests are ever logged.
     fn api_key_header(&self) -> reqwest::header::HeaderValue {
-        let mut value = reqwest::header::HeaderValue::from_str(&self.api_key)
+        let mut value = reqwest::header::HeaderValue::from_str(&self.api_key.current())
             .unwrap_or_else(|_| reqwest::header::HeaderValue::from_static(""));
         value.set_sensitive(true);
         value

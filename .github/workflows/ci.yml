@@ -31,6 +31,14 @@ jobs:
           promtool check rules alerts.yml legacy-names.rules.yml
           promtool test rules legacy-names.test.yml
 
+  kubernetes:
+    name: Kubernetes manifests (kustomize + kubeconform)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Render deploy/kubernetes and validate it, including the ServiceMonitor and Probe
+        run: scripts/validate-kubernetes.sh
+
   audit:
     name: security audit (cargo audit)
     runs-on: ubuntu-latest

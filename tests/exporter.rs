@@ -1473,3 +1473,80 @@ fn router_needs_the_default_key_for_a_host_or_allow_list() {
 
     assert!(server::router(&config_only_args(config)).is_ok());
 }
+
+/// A node that answers /health for any key and remembers what it was sent.
+async fn key_recording_node() -> MockServer {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/health"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .mount(&mock)
+        .await;
+    mock
+}
+
+/// The keys sent to /health, oldest first.
+async fn health_keys(mock: &MockServer) -> Vec<String> {
+    let requests = mock.received_requests().await.unwrap();
+    let health: Vec<_> = requests
+        .into_iter()
+        .filter(|r| r.url.path() == "/health")
+        .collect();
+    received_keys(&health)
+}
+
+/// Rewrite a key file; the tests pick keys of different lengths so the change
+/// shows whatever the file system's timestamp resolution.
+fn rotate(path: &std::path::Path, key: &str) {
+    std::fs::write(path, format!("{key}\n")).unwrap();
+}
+
+#[tokio::test]
+async fn a_rotated_key_file_is_used_by_the_next_scrape() {
+    let mock = key_recording_node().await;
+    let key_file = temp_file("rotating-key", "first-key\n");
+    let mut args = args_for(&mock.address().ip().to_string(), mock.address().port(), 0);
+    args.typesense_api_key = None;
+    args.typesense_api_key_file = Some(key_file.clone());
+    let base = spawn_exporter(args).await;
+
+    scrape(&base).await;
+    rotate(&key_file, "second-key-is-longer");
+    // Reloads are checked at most once per second.
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    scrape(&base).await;
+    // An unusable file keeps the last good key.
+    rotate(&key_file, "");
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    scrape(&base).await;
+
+    assert_eq!(
+        health_keys(&mock).await,
+        ["first-key", "second-key-is-longer", "second-key-is-longer"]
+    );
+}
+
+#[tokio::test]
+async fn a_rotated_cluster_key_file_is_used_by_the_next_probe() {
+    let mock = key_recording_node().await;
+    let key_file = temp_file("cluster-rotating-key", "old-cluster-key\n");
+    let config = temp_file(
+        "rotating-probe.toml",
+        &format!(
+            "[clusters.prod]\ntargets = [{:?}]\napi_key_file = {:?}\nprotocol = \"http\"\n",
+            node_addr(&mock),
+            key_file.display().to_string()
+        ),
+    );
+    let base = spawn_exporter(config_only_args(config)).await;
+
+    probe(&base, &node_addr(&mock)).await;
+    rotate(&key_file, "new-cluster-key-longer");
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    probe(&base, &node_addr(&mock)).await;
+
+    assert_eq!(
+        health_keys(&mock).await,
+        ["old-cluster-key", "new-cluster-key-longer"]
+    );
+}

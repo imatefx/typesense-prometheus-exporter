@@ -2,7 +2,7 @@
 
 ## Overview
 
-The exporter is a small stateless HTTP service. Each time Prometheus scrapes `/metrics` (the node set with `--typesense-host`) or `/probe?target=<node>` (any allowed node), the exporter queries one Typesense node, turns the answers into Prometheus metrics, and returns them. It keeps nothing between scrapes.
+The exporter is a small HTTP service. Each time Prometheus scrapes `/metrics` (the node set with `--typesense-host`) or `/probe?target=<node>` (any allowed node), the exporter queries one Typesense node, turns the answers into Prometheus metrics, and returns them. It keeps nothing between scrapes except the current API key, which it re-reads when its file changes.
 
 ```mermaid
 flowchart LR
@@ -56,7 +56,8 @@ A fresh registry on every scrape means a metric that disappears from Typesense a
 | `src/config.rs` | `--config`: the TOML file, its option names and the flag > environment > file > default merge |
 | `src/probe_config.rs` | `[clusters.<name>]`: validation, key loading and node-to-cluster lookup |
 | `src/target.rs` | `Target`: strict parsing of `/probe` targets (IPv6, default scheme and port, no paths or credentials); `AllowList`: the nodes `/probe` may contact |
-| `src/typesense/mod.rs` | `TypesenseClient`: a shared HTTP client, base URL, API key; one method per endpoint |
+| `src/key.rs` | `KeySource`: an API key that is fixed (flag, environment) or follows a key file, re-reading it when its modified time or length changes (checked at most once a second, per file) |
+| `src/typesense/mod.rs` | `TypesenseClient`: a shared HTTP client, base URL, `KeySource`; one method per endpoint |
 | `src/typesense/models/` | serde models for the six endpoint responses. For the 1.0 names, `TypesenseMetrics::fixed_entries()` gives the fixed `/metrics.json` fields and `core_number()` picks the core out of a per-core CPU key; the 1.0 mapping reads the remaining fields (per-core values and unmapped ones) from `other` directly. `TypesenseMetrics::entries()` gives the `(key, value)` pairs for the 0.4 output. `TypesenseStats::entries()` gives every numeric `/stats.json` field and feeds both name sets |
 | `src/prometheus_exp.rs` | `Scrape`, plus rendering to Prometheus text: the 1.0 and 0.4 name mappings, unit conversion, per-collection parsing, label handling |
 | `src/lib.rs` | Exposes the modules so integration and e2e tests can build the real router |
@@ -70,6 +71,8 @@ A fresh registry on every scrape means a metric that disappears from Typesense a
 **`/metrics` and `/probe` return 200 when Typesense is down.** Typesense failures are reported in the metrics, not as an HTTP error. `up == 0` is kept for "the exporter itself is down" (or, for `/probe`, "the target was refused", which is a 403 or 400).
 
 **`/probe` only contacts allowed nodes.** The exporter sends its API key to the node it scrapes, so an open `/probe` would leak the key and allow SSRF. A target must belong to a configured cluster, or match `--probe-allowed-targets` (or the configured `--typesense-host`), on lowercase host and port before any request is made; `*` opts out. A cluster's node is always scraped with that cluster's key and protocol and each node has exactly one home (checked at startup), so a key cannot reach another cluster's nodes, even with `*`. Prometheus lists the nodes, and the exporter doesn't discover them, because Typesense has no API for cluster peers.
+
+**Keys follow their file.** A `KeySource` holds the key and the file's modified time and length behind a mutex, and `TypesenseClient` asks it for the current key on every request. The first request after a second has passed checks the file's metadata (following symlinks, so a Kubernetes `..data` swap is seen) and re-reads the file only if it changed. This polls on use, so there is no watcher thread or extra dependency, and the lock is held only for a `stat`. A file that turns out unreadable or empty leaves the previous key in place, warns once, and is tried again when it changes. A key from a flag or environment variable is a fixed `KeySource`.
 
 **Timeout below the scrape timeout.** A hung Typesense node must not hold the response past Prometheus' scrape timeout, or the whole scrape is lost and the problem shows up as the wrong alert. See [configuration](configuration.md#timeouts).
 

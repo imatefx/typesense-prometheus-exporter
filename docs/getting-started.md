@@ -47,7 +47,7 @@ Each node reports its own health, raft role and the traffic it served, so Promet
 docker run -d --name typesense-exporter -p 8888:8888 \
   -e TYPESENSE_HOST=typesense-1.internal \
   -e TYPESENSE_API_KEY=<admin-api-key> \
-  imatefx/typesense-prometheus-exporter:v1.1.0
+  imatefx/typesense-prometheus-exporter:v1.2.0
 ```
 
 Or the binary. Build it with `cargo build --release`, or use the static Linux builds from `./build-cross.sh`.
@@ -92,7 +92,7 @@ Instead of one exporter per node, run a single exporter without `--typesense-hos
 docker run -d --name typesense-exporter -p 8888:8888 \
   -e TYPESENSE_PROBE_ALLOWED_TARGETS=typesense-1.internal,typesense-2.internal,typesense-3.internal \
   -e TYPESENSE_API_KEY=<admin-api-key> \
-  imatefx/typesense-prometheus-exporter:v1.1.0
+  imatefx/typesense-prometheus-exporter:v1.2.0
 ```
 
 Prometheus scrapes the exporter once per node and passes the node as `target`. Spelled out for two nodes, each entry's address is the exporter, `__param_target` becomes `?target=`, and `instance` names the node:
@@ -131,6 +131,10 @@ scrape_configs:
 ```
 
 Check it with `curl -s 'localhost:8888/probe?target=typesense-1.internal' | grep -E '^typesense_(health|raft_state)'`. The `host` and `port` labels on the metrics name the Typesense node, so the dashboards and alerts work unchanged. Targets that aren't in `TYPESENSE_PROBE_ALLOWED_TARGETS` get a 403, because the exporter sends its API key to every node it probes; see [the security note](configuration.md#security-the-allow-list). `up` is now per probe, so `TypesenseExporterDown` fires for every node at once when the exporter is down.
+
+### On Kubernetes
+
+[`deploy/kubernetes/`](../deploy/kubernetes) has ready-to-apply manifests for both setups above (`kubectl apply -k`), with a Prometheus Operator `ServiceMonitor` or `Probe`. See its [README](../deploy/kubernetes/README.md) for pointing it at an existing Typesense install and for rotating the API key without a restart.
 
 ### 3. Import the Grafana dashboards
 

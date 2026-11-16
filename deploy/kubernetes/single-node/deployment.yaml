@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: typesense-exporter
+  labels:
+    app.kubernetes.io/name: typesense-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: typesense-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: typesense-exporter
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: exporter
+          image: imatefx/typesense-prometheus-exporter:v1.2.0
+          ports:
+            - name: http
+              containerPort: 8888
+          env:
+            # The Typesense node this exporter sits next to: a Service name,
+            # or localhost if you run the exporter as a sidecar.
+            - name: TYPESENSE_HOST
+              value: typesense
+            - name: TYPESENSE_PORT
+              value: "8108"
+            - name: TYPESENSE_PROTOCOL
+              value: http
+            # Per request. Keep the scrape timeout in the ServiceMonitor above it.
+            - name: TYPESENSE_TIMEOUT
+              value: "5"
+            # Re-read when the Secret changes; no restart needed.
+            - name: TYPESENSE_API_KEY_FILE
+              value: /run/secrets/typesense/api-key
+          volumeMounts:
+            # Mount the whole Secret, not one file with subPath: Kubernetes
+            # only updates a mounted Secret that is not a subPath mount.
+            - name: api-key
+              mountPath: /run/secrets/typesense
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 25m
+              memory: 16Mi
+            limits:
+              cpu: 200m
+              memory: 64Mi
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+      volumes:
+        - name: api-key
+          secret:
+            secretName: typesense-api-key

@@ -3,12 +3,14 @@
 //! A `/probe` target belongs to the cluster that lists it and is scraped with
 //! that cluster's key and protocol, so a key can only reach its own nodes. The
 //! file names where a key lives (a file or an environment variable), never the
-//! key itself, and keys are read once at startup.
+//! key itself. A key file is re-read when it changes; an environment variable
+//! is read once at startup.
 
 use std::{collections::BTreeMap, fmt, path::Path};
 
 use serde::Deserialize;
 
+use crate::key::KeySource;
 use crate::target::{normalize_host, parse_authority, Target};
 
 /// An inline `api_key` is deliberately not a field: `deny_unknown_fields`
@@ -30,12 +32,17 @@ pub struct Cluster {
     pub protocol: String,
     /// Normalised host and port of each node.
     pub nodes: Vec<(String, u16)>,
-    api_key: String,
+    key: KeySource,
 }
 
 impl Cluster {
-    pub fn api_key(&self) -> &str {
-        &self.api_key
+    /// The current key; a key file is re-read when it changes.
+    pub fn api_key(&self) -> String {
+        self.key.current()
+    }
+
+    pub fn key_source(&self) -> &KeySource {
+        &self.key
     }
 }
 
@@ -116,18 +123,20 @@ impl ProbeConfig {
                 }
                 (Some(key_file), None) => {
                     let key_file = crate::config::relative_to(path, key_file);
-                    crate::cli::read_key_file(&key_file).map_err(|e| {
+                    KeySource::file(&key_file).map_err(|e| {
                         format!("{at}: cannot read api_key_file {}: {e}", key_file.display())
                     })?
                 }
-                (None, Some(var)) => crate::config::key_from_env(&var, "api_key_env", &at, &env)?,
+                (None, Some(var)) => {
+                    KeySource::fixed(crate::config::key_from_env(&var, "api_key_env", &at, &env)?)
+                }
             };
 
             clusters.push(Cluster {
                 name,
                 protocol: protocol.unwrap_or_else(|| default_protocol.to_ascii_lowercase()),
                 nodes,
-                api_key,
+                key: api_key,
             });
         }
         Ok(Self { clusters })
@@ -212,7 +221,10 @@ mod tests {
 
         assert_eq!(cfg.clusters.len(), 2);
         let prod = cfg.find(&target("ts-prod-2")).unwrap();
-        assert_eq!((prod.name.as_str(), prod.api_key()), ("prod", "prod-key"));
+        assert_eq!(
+            (prod.name.as_str(), prod.api_key().as_str()),
+            ("prod", "prod-key")
+        );
         let staging = cfg.find(&target("ts-staging-1:9000")).unwrap();
         assert_eq!(staging.api_key(), "staging-key");
         assert!(cfg.find(&target("ts-staging-1")).is_none(), "other port");

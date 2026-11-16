@@ -1,0 +1,17 @@
+# Needs the Prometheus Operator CRDs. Your Prometheus may only select
+# ServiceMonitors with a label such as `release: <helm release>`; add it here.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: typesense-exporter
+  labels:
+    app.kubernetes.io/name: typesense-exporter
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: typesense-exporter
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s   # above TYPESENSE_TIMEOUT (5s)

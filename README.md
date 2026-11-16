@@ -58,7 +58,7 @@ open http://localhost:3000        # Grafana: admin / admin
 docker run -d -p 8888:8888 \
   -e TYPESENSE_HOST=typesense-1.internal \
   -e TYPESENSE_API_KEY=<admin-api-key> \
-  imatefx/typesense-prometheus-exporter:v1.1.0
+  imatefx/typesense-prometheus-exporter:v1.2.0
 
 curl -s localhost:8888/metrics | grep -E '^typesense_(health|raft_state)'
 ```
@@ -92,7 +92,7 @@ scrape_configs:
 docker run -d -p 8888:8888 \
   -e TYPESENSE_PROBE_ALLOWED_TARGETS=ts-1.internal,ts-2.internal,ts-3.internal \
   -e TYPESENSE_API_KEY=<admin-api-key> \
-  imatefx/typesense-prometheus-exporter:v1.1.0
+  imatefx/typesense-prometheus-exporter:v1.2.0
 
 curl -s 'localhost:8888/probe?target=ts-1.internal' | grep -E '^typesense_(health|raft_state)'
 ```
@@ -132,6 +132,8 @@ scrape_configs:
 **Several clusters with different keys.** Put everything in one TOML file, with a `[clusters.<name>]` per cluster (`targets`, `api_key_file` or `api_key_env`, optional `protocol`), and start with `typesense-prometheus-exporter --config exporter.toml`. `/probe` uses a cluster's key only for that cluster's nodes. See [the config file](docs/configuration.md#config-file), [several clusters](docs/configuration.md#several-clusters-with-different-keys) and [deploy/exporter.example.toml](deploy/exporter.example.toml).
 
 The exporter only probes the listed nodes, because it sends its API key to every node it scrapes. See [configuration](docs/configuration.md#probing-several-nodes-from-one-exporter).
+
+**On Kubernetes**, [`deploy/kubernetes/`](deploy/kubernetes) has plain manifests (with a Prometheus Operator `ServiceMonitor` or `Probe`) for both setups, and a key file such as a mounted Secret is [reloaded without a restart](docs/configuration.md#rotating-keys).
 
 Then import the [dashboards](grafana/) and [alert rules](deploy/prometheus/alerts.yml). The [getting started guide](docs/getting-started.md) walks through it.
 

@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: typesense-exporter
+  labels:
+    app.kubernetes.io/name: typesense-exporter
+data:
+  exporter.toml: |
+    typesense_timeout = 5
+
+    # The nodes of one Typesense cluster. These are the names Prometheus
+    # passes as ?target=, so the Probe resource must list them the same way.
+    # For a StatefulSet "typesense" behind a headless Service "typesense" in
+    # the namespace "typesense":
+    [clusters.prod]
+    targets = [
+      "typesense-0.typesense.typesense.svc:8108",
+      "typesense-1.typesense.typesense.svc:8108",
+      "typesense-2.typesense.typesense.svc:8108",
+    ]
+    api_key_file = "/run/secrets/typesense/api-key"
+    protocol = "http"
+
+    # Instead of a cluster, a single key for a list of nodes works too:
+    #   probe_allowed_targets = ["typesense-0.typesense.typesense.svc:8108"]
+    #   typesense_api_key_file = "/run/secrets/typesense/api-key"

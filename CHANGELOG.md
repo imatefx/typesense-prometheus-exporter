@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-16
+
+### Added
+- **API keys read from a file are reloaded without a restart.** This covers `--typesense-api-key-file` / `typesense_api_key_file` and a cluster's `api_key_file`, so rotating a key (for example a Kubernetes Secret update) no longer needs a restart. Before a scrape the exporter looks at the file's modified time and length (following symlinks, which is how Kubernetes swaps a Secret volume's `..data` link), at most once per second per file, and re-reads it when they changed. A reload logs `reloaded the Typesense API key from <path>` at info, never the key. If the new file is unreadable or empty the previous key stays in use and the problem is logged once at warn. Startup still fails on a bad key file. Keys from `--typesense-api-key`, `TYPESENSE_API_KEY` and `api_key_env` never change at runtime.
+- **Kubernetes examples** in [`deploy/kubernetes/`](deploy/kubernetes): plain manifests (no Helm chart) that run as a non-root user with a read-only root file system and no capabilities. `single-node/` is one exporter next to one Typesense node with a Prometheus Operator `ServiceMonitor`; `cluster-probe/` is one exporter for a whole cluster with a config file, a Secret and a Prometheus Operator `Probe` (plus the plain Prometheus scrape config). Each folder has a `kustomization.yaml` for `kubectl apply -k`.
+- CI job `kubernetes`: renders both kustomizations and validates them, including the `ServiceMonitor` and `Probe` resources, with kubeconform.
+
 ## [1.1.0] - 2026-11-16
 
 ### Added
@@ -190,7 +197,8 @@ dashboards, a local stack and a full test suite. Metric names and labels from
 ### Added
 - First release: exports Typesense `/metrics.json` and `/stats.json` in Prometheus format.
 
-[Unreleased]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.4.1...v1.0.0
 [0.4.1]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.4.0...v0.4.1

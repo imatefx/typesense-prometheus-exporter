@@ -4,8 +4,8 @@ Three layers, from fast and isolated to slow and real:
 
 | Layer | Where | Runs against | Count | Time | Needs |
 |---|---|---|---|---|---|
-| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 88 | < 1s | Rust |
-| Integration | [`tests/exporter.rs`](../tests/exporter.rs), [`tests/config_env.rs`](../tests/config_env.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 57 | ~1s | Rust |
+| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 95 | < 1s | Rust |
+| Integration | [`tests/exporter.rs`](../tests/exporter.rs), [`tests/config_env.rs`](../tests/config_env.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 59 | ~1s | Rust |
 | End-to-end | [`tests/e2e.rs`](../tests/e2e.rs) | A real 3-node Typesense cluster, one exporter, Prometheus and Grafana in Docker | 9 | ~3–5 min | Rust, Docker |
 
 ```bash
@@ -114,6 +114,18 @@ The 1.0 names ([design](metrics-v1.md)) and the `--metric-names` modes:
 | `rejects_a_node_in_two_clusters_but_not_twice_in_one` | A node in two clusters names both; repeating it in one is harmless |
 | `debug_never_prints_the_key` | `Debug` output redacts the key |
 
+### API key reload: `src/key.rs`
+
+| Test | Verifies |
+|---|---|
+| `fixed_key_never_changes` | A flag or environment key is returned as is; `Debug` redacts it |
+| `changed_contents_give_the_new_key` | A rewritten key file gives the new key, trimmed |
+| `empty_or_missing_file_keeps_the_old_key_and_warns_once` | An empty or deleted file keeps the old key, records one warning per distinct problem, and a usable file afterwards takes effect and clears it |
+| `unchanged_metadata_is_not_re_read` | Same modified time and length: the file is not read again, so new contents are not picked up |
+| `checks_at_most_once_per_interval` | Within the first second a change is not looked for |
+| `symlink_swap_like_a_kubernetes_secret_is_followed` | Swapping a `..data` symlink to a directory with a new key, with the same key length, is noticed (unix only) |
+| `startup_fails_on_an_unusable_file` | A missing or empty key file is an error at startup |
+
 ### Models: `src/typesense/models/`
 
 | Test | Verifies |
@@ -176,6 +188,8 @@ The exporter runs with the default `--metric-names=v1` unless a test says otherw
 | `scrape_health_flags_the_failing_endpoints` | 401, malformed JSON and a missing endpoint | Those endpoints report 0; the working one reports 1 |
 | `document_ids_do_not_create_new_series` | 50 document IDs plus a search in `/stats.json` | Exactly 2 series: `documents/:id` (rates summed) and `documents/search`; no `key` label on the by-collection metrics |
 | `reads_the_api_key_from_a_file` | Key supplied with `TYPESENSE_API_KEY_FILE` | Requests carry the key from the file |
+| `a_rotated_key_file_is_used_by_the_next_scrape` | Scrape, rewrite the key file, scrape again after more than a second, then empty the file and scrape once more | The mock sees the first key, then the new key, then the new key again (an empty file keeps the last good key) |
+| `a_rotated_cluster_key_file_is_used_by_the_next_probe` | Same for a cluster's `api_key_file`, through `/probe` | The mock sees the old key, then the new one |
 | `startup_fails_without_a_readable_key_file` | Key file missing | `server::router` returns an error |
 | `run_fails_when_the_port_is_taken` | Bind port already in use | `run` returns `AddrInUse` instead of panicking |
 | `v1_names_are_the_default_with_base_units_and_counters` | Default settings, healthy node | Every 1.0 family and no 0.4 family; network bytes are counters; values in seconds and ratios; nothing in `typesense_unmapped` |
@@ -282,6 +296,7 @@ If the local figure looks wrong (lines marked uncovered that are blank or commen
 | `audit` | `cargo audit -D warnings`: fails on any known vulnerability or warning in the dependency tree |
 | `test` | Unit and integration tests under `cargo llvm-cov` (90% minimum); uploads `lcov.info`; publishes the coverage badge on `main` |
 | `rules` | `promtool check rules` on the alert and recording rules, and `promtool test rules` on [`legacy-names.test.yml`](../deploy/prometheus/legacy-names.test.yml) |
+| `kubernetes` | [`scripts/validate-kubernetes.sh`](../scripts/validate-kubernetes.sh): renders both [`deploy/kubernetes`](../deploy/kubernetes) folders with kustomize and validates them with kubeconform, including the `ServiceMonitor` and `Probe` schemas |
 | `e2e` | `cargo nextest run --features e2e --test e2e --profile ci`; uploads a JUnit report; prints exporter logs on failure; always tears the stack down |
 
 Two more workflows check every pull request:

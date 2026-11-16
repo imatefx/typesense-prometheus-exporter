@@ -6,7 +6,7 @@ use std::{
 use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
 use serde::Deserialize;
 
-use crate::{config, probe_config::ProbeConfig, target};
+use crate::{config, key::KeySource, probe_config::ProbeConfig, target};
 
 /// Which metric names the exporter emits. See `docs/metrics-v1.md`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum, Deserialize)]
@@ -156,6 +156,15 @@ impl CliArgs {
         match (&self.typesense_api_key, &self.typesense_api_key_file) {
             (Some(key), _) if !key.trim().is_empty() => Ok(key.clone()),
             (_, Some(path)) if !path.as_os_str().is_empty() => read_key_file(path),
+            _ => Err(std::io::Error::other("no Typesense API key configured")),
+        }
+    }
+
+    /// Like [`Self::api_key`], but a key file is followed when it changes.
+    pub fn key_source(&self) -> std::io::Result<KeySource> {
+        match (&self.typesense_api_key, &self.typesense_api_key_file) {
+            (Some(key), _) if !key.trim().is_empty() => Ok(KeySource::fixed(key.clone())),
+            (_, Some(path)) if !path.as_os_str().is_empty() => KeySource::file(path),
             _ => Err(std::io::Error::other("no Typesense API key configured")),
         }
     }
