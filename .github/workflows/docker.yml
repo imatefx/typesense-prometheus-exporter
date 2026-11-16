@@ -9,11 +9,13 @@
 
 # Publishes imatefx/typesense-prometheus-exporter to Docker Hub.
 #
-# - Pushing a version tag (vX.Y.Z) builds linux/amd64 + linux/arm64 and pushes
-#   :vX.Y.Z and :latest, with a build provenance attestation.
+# - Pushing a version tag (vX.Y.Z) builds linux/amd64 and linux/arm64, each on
+#   a native runner (no QEMU emulation), pushes them by digest, then merges them
+#   into one multi-arch image tagged :vX.Y.Z and :latest, with a build
+#   provenance attestation.
 # - Run it manually ("Run workflow", choosing a tag) to republish a release.
-# - Pull requests build linux/amd64 only, without pushing, so a broken
-#   Dockerfile is caught before release.
+# - Pull requests build both architectures natively, without pushing, so a
+#   broken Dockerfile is caught before release.
 #
 # Triggered by the tag rather than by the GitHub release: the release is
 # created by rust.yml with GITHUB_TOKEN, and GitHub doesn't start other
@@ -49,16 +51,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --locked
 
-  push_to_registry:
-    name: Build and push Docker image
+  build:
+    name: Build ${{ matrix.platform }}
     needs: test
     # Runs after a passing test job, or on pull requests where it is skipped.
     if: ${{ !failure() && !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
     permissions:
       contents: read
-      id-token: write      # build provenance attestation
-      attestations: write
     env:
       # Publish only from a version tag (pushed, or chosen when run manually).
       PUBLISH: ${{ github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v') }}
@@ -68,11 +76,10 @@ jobs:
 
       - name: Version
         id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
-      - name: Set up QEMU
-        if: env.PUBLISH == 'true'
-        uses: docker/setup-qemu-action@v3
+        run: |
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          platform=${{ matrix.platform }}
+          echo "pair=${platform//\//-}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2
@@ -84,7 +91,68 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Extract metadata (tags, labels) for Docker
+      - name: Extract metadata (labels) for Docker
+        id: meta
+        uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe97b2010124a938b7
+        with:
+          images: ${{ env.IMAGE_NAME }}
+
+      - name: Build (and push by digest when publishing)
+        id: build
+        uses: docker/build-push-action@3b5e8027fcad23fda98b2e3ac259d8d67585f671
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            version=${{ steps.version.outputs.version }}
+            release=${{ github.sha }}
+          outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=${{ env.PUBLISH }}
+
+      - name: Export digest
+        if: env.PUBLISH == 'true'
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        if: env.PUBLISH == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ steps.version.outputs.pair }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish multi-arch image
+    needs: build
+    if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write      # build provenance attestation
+      attestations: write
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@f4ef78c080cd8ba55a85445d5b36e214a81df20a
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Extract metadata (tags) for Docker
         id: meta
         uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe97b2010124a938b7
         with:
@@ -92,27 +160,23 @@ jobs:
           flavor: latest=false
           tags: |
             type=ref,event=tag
-            type=raw,value=latest,enable=${{ env.PUBLISH == 'true' }}
-            type=ref,event=pr
+            type=raw,value=latest
 
-      - name: Build and push Docker image
-        id: push
-        uses: docker/build-push-action@3b5e8027fcad23fda98b2e3ac259d8d67585f671
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: ${{ env.PUBLISH == 'true' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
-          push: ${{ env.PUBLISH == 'true' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            version=${{ steps.version.outputs.version }}
-            release=${{ github.sha }}
+      - name: Create and push the multi-arch manifest
+        id: manifest
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          # shellcheck disable=SC2046
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "${IMAGE_NAME}@sha256:%s " *)
+          digest=$(docker buildx imagetools inspect "${IMAGE_NAME}:${GITHUB_REF_NAME}" --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          docker buildx imagetools inspect "${IMAGE_NAME}:${GITHUB_REF_NAME}"
 
       - name: Generate artifact attestation
-        if: env.PUBLISH == 'true'
         uses: actions/attest-build-provenance@v1
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.push.outputs.digest }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
           push-to-registry: true

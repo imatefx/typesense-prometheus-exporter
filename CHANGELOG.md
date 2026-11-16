@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- CI builds arm64 natively on GitHub's ARM runners (`ubuntu-24.04-arm`), for both the Docker image and the Linux arm64 release binary. QEMU emulation and the cross toolchain are no longer used. Each architecture's image builds in parallel and is merged into one multi-arch manifest.
+
 ## [0.4.0] - 2026-11-16
 
 ### Added
