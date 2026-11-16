@@ -1,11 +1,11 @@
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-/// Response of Typesense's `/stats.json` endpoint.
+/// Response of Typesense's `/stats.json` endpoint. Fields missing from the
+/// response (e.g. `cache_hit_ratio` on older Typesense versions) default to 0.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
 pub struct TypesenseStats {
-    /// Only reported by newer Typesense versions.
-    #[serde(default)]
     pub cache_hit_ratio: f64,
     pub delete_latency_ms: f64,
     pub delete_requests_per_second: f64,
@@ -53,5 +53,38 @@ impl TypesenseStats {
             ("write_latency_ms", self.write_latency_ms),
             ("write_requests_per_second", self.write_requests_per_second),
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_fields_default_to_zero() {
+        let stats: TypesenseStats = serde_json::from_str(r#"{"search_latency_ms": 2.5}"#).unwrap();
+
+        assert_eq!(stats.search_latency_ms, 2.5);
+        assert_eq!(stats.cache_hit_ratio, 0.0);
+        assert!(stats.latency_ms.is_empty());
+    }
+
+    #[test]
+    fn entries_cover_every_scalar_stat() {
+        let stats: TypesenseStats =
+            serde_json::from_str(r#"{"cache_hit_ratio": 0.5, "write_requests_per_second": 7}"#)
+                .unwrap();
+        let entries = stats.entries();
+
+        assert_eq!(entries.len(), 12);
+        assert!(entries.contains(&("cache_hit_ratio", 0.5)));
+        assert!(entries.contains(&("write_requests_per_second", 7.0)));
+    }
+
+    #[test]
+    fn wrong_type_is_an_error() {
+        assert!(
+            serde_json::from_str::<TypesenseStats>(r#"{"search_latency_ms": "fast"}"#).is_err()
+        );
     }
 }

@@ -98,3 +98,56 @@ impl TypesenseMetrics {
         fixed.into_iter().chain(per_core)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn keys(m: &TypesenseMetrics) -> Vec<&str> {
+        m.entries().map(|(k, _)| k).collect()
+    }
+
+    #[test]
+    fn exports_every_numbered_core() {
+        let json = (1..=32)
+            .map(|n| format!(r#""system_cpu{n}_active_percentage": "{n}""#))
+            .collect::<Vec<_>>()
+            .join(",");
+        let m: TypesenseMetrics = serde_json::from_str(&format!("{{{json}}}")).unwrap();
+        let cores: Vec<_> = m
+            .entries()
+            .filter(|(k, _)| k.starts_with("system_cpu") && *k != "system_cpu_active_percentage")
+            .collect();
+
+        assert_eq!(cores.len(), 32);
+        assert!(cores.contains(&("system_cpu32_active_percentage", "32")));
+    }
+
+    #[test]
+    fn ignores_non_core_and_non_string_values() {
+        let m: TypesenseMetrics = serde_json::from_str(
+            r#"{"system_cpuX_active_percentage": "1", "system_cpu_active_percentage_extra": "1",
+                "system_cpu7_active_percentage": 7, "system_cpu_active_percentage": "9",
+                "unrelated": "1"}"#,
+        )
+        .unwrap();
+        let keys = keys(&m);
+
+        assert!(!keys
+            .iter()
+            .any(|k| k.contains("cpuX") || k.contains("extra") || *k == "unrelated"));
+        assert!(
+            !keys.contains(&"system_cpu7_active_percentage"),
+            "numbers are not strings"
+        );
+        assert!(keys.contains(&"system_cpu_active_percentage"));
+    }
+
+    #[test]
+    fn empty_response_still_lists_fixed_metrics() {
+        let m: TypesenseMetrics = serde_json::from_str("{}").unwrap();
+
+        assert_eq!(keys(&m).len(), 16);
+        assert!(m.entries().all(|(_, v)| v.is_empty()));
+    }
+}

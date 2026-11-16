@@ -15,17 +15,23 @@ struct AppState {
     port: u16,
 }
 
-pub async fn start_metrics_server(args: CliArgs) -> std::io::Result<()> {
+/// Build the exporter's HTTP router for the Typesense node described by `args`.
+pub fn router(args: &CliArgs) -> reqwest::Result<Router> {
     let state = Arc::new(AppState {
-        client: TypesenseClient::new(&args).map_err(std::io::Error::other)?,
+        client: TypesenseClient::new(args)?,
         host: args.typesense_host.clone(),
         port: args.typesense_port,
     });
 
-    let app = Router::new()
+    Ok(Router::new()
         .route("/", get(root))
         .route("/metrics", get(metrics_handler))
-        .with_state(state);
+        .with_state(state))
+}
+
+/// Bind to the configured address and serve until SIGINT/SIGTERM.
+pub async fn run(args: CliArgs) -> std::io::Result<()> {
+    let app = router(&args).map_err(std::io::Error::other)?;
 
     let bind_address = format!("{}:{}", args.exporter_bind_address, args.exporter_bind_port);
     let listener = tokio::net::TcpListener::bind(&bind_address).await?;

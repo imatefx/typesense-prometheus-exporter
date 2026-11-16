@@ -229,4 +229,62 @@ mod tests {
         assert!(out.contains(r#"typesense_health{host="ts.local",port="8108"} 0"#));
         assert!(out.contains(r#"typesense_raft_state{host="ts.local",port="8108"} 0"#));
     }
+
+    #[test]
+    fn unknown_raft_states_are_reported_as_zero() {
+        for (state, expected) in [(1, "1"), (4, "4"), (2, "0"), (-1, "0")] {
+            let scrape = Scrape {
+                raft_state: state,
+                ..Scrape::default()
+            };
+            let out = generate_metrics(&scrape, "h", 1);
+            assert!(
+                out.contains(&format!(
+                    r#"typesense_raft_state{{host="h",port="1"}} {expected}"#
+                )),
+                "state {state}"
+            );
+        }
+    }
+
+    #[test]
+    fn unparseable_values_are_exported_as_zero() {
+        let metrics: TypesenseMetrics =
+            serde_json::from_str(r#"{"system_disk_used_bytes": "n/a"}"#).unwrap();
+        let stats: TypesenseStats = serde_json::from_str(
+            r#"{"latency_ms": {"POST /collections/a/documents/import": "slow"}}"#,
+        )
+        .unwrap();
+        let scrape = Scrape {
+            metrics: Some(metrics),
+            stats: Some(stats),
+            ..Scrape::default()
+        };
+        let out = generate_metrics(&scrape, "h", 1);
+
+        assert!(
+            out.contains(r#"typesense_metrics{host="h",key="system_disk_used_bytes",port="1"} 0"#)
+        );
+        assert!(out.contains(r#"action="documents/import",collection_name="a""#));
+    }
+
+    #[test]
+    fn non_collection_paths_skip_by_collection_metrics() {
+        for path in ["GET /health", "GET /collections", "GET /collections/books"] {
+            assert_eq!(parse_collection_action(path), None, "{path}");
+        }
+        assert_eq!(
+            parse_collection_action("DELETE /collections/books/documents/42"),
+            Some(("DELETE", "books", "documents/42"))
+        );
+    }
+
+    #[test]
+    fn output_has_help_and_type_lines() {
+        let out = generate_metrics(&Scrape::default(), "h", 1);
+
+        assert!(out.contains("# HELP typesense_health "));
+        assert!(out.contains("# TYPE typesense_health gauge"));
+        assert!(out.contains("# TYPE typesense_raft_state gauge"));
+    }
 }
