@@ -4,7 +4,10 @@ use std::sync::Arc;
 use crate::{
     cli::CliArgs,
     typesense::models::{
-        typesense_metrics_model::TypesenseMetrics, typesense_stats_model::TypesenseStats,
+        typesense_metrics_model::TypesenseMetrics,
+        typesense_stats_model::TypesenseStats,
+        typesense_health_model::TypesenseHealth,
+        typesense_debug_model::TypesenseDebug,
     },
 };
 use prometheus::{register_gauge_vec_with_registry, Encoder, Registry, TextEncoder};
@@ -13,6 +16,8 @@ use regex::Regex;
 pub(crate) async fn generate_metrics(
     ts_metrics: TypesenseMetrics,
     ts_stats: TypesenseStats,
+    ts_health: TypesenseHealth,
+    ts_debug: TypesenseDebug,
     cli_args: Arc<CliArgs>,
 ) -> String {
     let registry = Registry::new();
@@ -397,6 +402,42 @@ pub(crate) async fn generate_metrics(
             }
         }
     }
+
+    let typesense_health = register_gauge_vec_with_registry!(
+        "typesense_health",
+        "Health status of Typesense instance (1 = healthy, 0 = unhealthy)",
+        &["host", "port"],
+        registry
+    )
+    .unwrap();
+
+    typesense_health
+        .with_label_values(&[
+            &cli_args.typesense_host,
+            &cli_args.typesense_port.to_string(),
+        ])
+        .set(if ts_health.ok { 1.0 } else { 0.0 });
+
+    let typesense_raft_state = register_gauge_vec_with_registry!(
+        "typesense_raft_state",
+        "Raft state of Typesense node (1 = leader, 4 = follower, 0 = other)",
+        &["host", "port"],
+        registry
+    )
+    .unwrap();
+
+    let state_value = match ts_debug.state {
+        1 => 1.0,
+        4 => 4.0,
+        _ => 0.0,
+    };
+
+    typesense_raft_state
+        .with_label_values(&[
+            &cli_args.typesense_host,
+            &cli_args.typesense_port.to_string(),
+        ])
+        .set(state_value);
 
     let encoder = TextEncoder::new();
     let metric_families = registry.gather();

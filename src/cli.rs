@@ -27,4 +27,8 @@ pub struct CliArgs {
     /// Bind port for internal server
     #[arg(long, env, default_value_t = 8888)]
     pub(crate) exporter_bind_port: u16,
+
+    /// Timeout for Typesense API requests in seconds (-1 to disable)
+    #[arg(long, env, default_value_t = -1)]
+    pub(crate) typesense_timeout: i64,
 }
