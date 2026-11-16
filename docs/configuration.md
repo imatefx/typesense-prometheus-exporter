@@ -299,14 +299,14 @@ expr: max by (cluster) (typesense_raft_state == bool 1) == 0
 
 ## Grafana
 
-Import the dashboards from [`grafana/`](../grafana) (**Dashboards → New → Import**) and pick your Prometheus data source when asked.
+Import the dashboards by grafana.com ID (**Dashboards → New → Import**), or upload the files from [`grafana/`](../grafana), and pick your Prometheus data source when asked.
 
-| Dashboard | Shows |
-|---|---|
-| Typesense Cluster Overview | Unhealthy nodes, leader, documents, search rate, p95, cache ratio; per-node health, raft state and version; replication lag, commit rate, queued writes; traffic and tail latency |
-| Typesense Metrics | CPU (overall and per core), disk, memory, swap, network, Typesense allocator memory |
-| Typesense Stats | Requests per second, and latency (avg, p95, p99, max) by operation; cache hit ratio, hits and misses |
-| Typesense By Collection | Requests per second and latency per collection; documents per collection |
+| Dashboard | grafana.com ID | Shows |
+|---|---|---|
+| Typesense Cluster Overview | [26064](https://grafana.com/grafana/dashboards/26064) | Unhealthy nodes, leader, documents, search rate, p95, cache ratio; per-node health, raft state and version; replication lag, commit rate, queued writes; traffic and tail latency |
+| Typesense Metrics | [26066](https://grafana.com/grafana/dashboards/26066) | CPU (overall and per core), disk, memory, swap, network, Typesense allocator memory |
+| Typesense Stats | [26065](https://grafana.com/grafana/dashboards/26065) | Requests per second, and latency (avg, p95, p99, max) by operation; cache hit ratio, hits and misses |
+| Typesense By Collection | [26067](https://grafana.com/grafana/dashboards/26067) | Requests per second and latency per collection; documents per collection |
 
 Every dashboard has a **Node** filter (`host` variable) to focus on one or more nodes.
 

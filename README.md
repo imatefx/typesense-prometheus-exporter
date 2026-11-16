@@ -191,7 +191,14 @@ See the [metrics reference](docs/metrics.md) for every family, with units and ex
 
 ## Dashboards
 
-Four dashboards, each with a **Node** filter.
+Four dashboards, each with a **Node** filter. They're also on grafana.com, so you can import them by ID (**Dashboards → New → Import**, enter the ID, pick your Prometheus data source):
+
+| Dashboard | grafana.com ID |
+|---|---|
+| Typesense Cluster Overview | [26064](https://grafana.com/grafana/dashboards/26064) |
+| Typesense Stats | [26065](https://grafana.com/grafana/dashboards/26065) |
+| Typesense Metrics | [26066](https://grafana.com/grafana/dashboards/26066) |
+| Typesense By Collection | [26067](https://grafana.com/grafana/dashboards/26067) |
 
 <details>
 <summary><b>Typesense Cluster Overview</b>: health, leader, versions, replication lag, documents, headline traffic</summary>
