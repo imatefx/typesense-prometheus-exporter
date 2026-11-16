@@ -1,197 +1,150 @@
+<div align="center">
+
 # Typesense Prometheus Exporter
+
+**Prometheus metrics, Grafana dashboards and alerts for [Typesense](https://typesense.org): single nodes and HA clusters.**
 
 [![CI](https://github.com/imatefx/typesense-prometheus-exporter/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/imatefx/typesense-prometheus-exporter/actions/workflows/ci.yml)
 [![Release build](https://github.com/imatefx/typesense-prometheus-exporter/actions/workflows/rust.yml/badge.svg)](https://github.com/imatefx/typesense-prometheus-exporter/actions/workflows/rust.yml)
-[![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/imatefx/typesense-prometheus-exporter/badges/coverage.json)](https://github.com/imatefx/typesense-prometheus-exporter/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/imatefx/typesense-prometheus-exporter/badges/coverage.json)](docs/testing.md#coverage)
+[![License: MIT](https://img.shields.io/github/license/imatefx/typesense-prometheus-exporter)](LICENSE)
+<br>
 [![Docker version](https://img.shields.io/docker/v/imatefx/typesense-prometheus-exporter?sort=semver&label=docker)](https://hub.docker.com/r/imatefx/typesense-prometheus-exporter)
 [![Docker pulls](https://img.shields.io/docker/pulls/imatefx/typesense-prometheus-exporter)](https://hub.docker.com/r/imatefx/typesense-prometheus-exporter)
 [![Image size](https://img.shields.io/docker/image-size/imatefx/typesense-prometheus-exporter/latest)](https://hub.docker.com/r/imatefx/typesense-prometheus-exporter/tags)
 [![Platforms](https://img.shields.io/badge/platforms-linux%2Famd64%20%7C%20linux%2Farm64-blue)](https://hub.docker.com/r/imatefx/typesense-prometheus-exporter/tags)
 [![Typesense](https://img.shields.io/badge/tested%20with-Typesense%2030.1-e5446d)](https://typesense.org)
-[![License: MIT](https://img.shields.io/github/license/imatefx/typesense-prometheus-exporter)](LICENSE)
 
-Exposes [Typesense](https://typesense.org) metrics, stats, health and raft cluster state in [Prometheus](https://prometheus.io) format, with ready-made Grafana dashboards and alert rules.
+[Getting started](docs/getting-started.md) ·
+[Configuration](docs/configuration.md) ·
+[Metrics](docs/metrics.md) ·
+[Architecture](docs/architecture.md) ·
+[Testing](docs/testing.md) ·
+[Changelog](CHANGELOG.md)
+
+<img src="screenshots/Typesense-Stats.png" alt="Typesense Stats dashboard: request rates, latency, health, raft state and cache hit ratio for a 3-node cluster" width="900">
+
+</div>
 
 ## Features
 
-- **System and memory metrics** from `/metrics.json`: CPU (every core), disk, memory, swap, network, and Typesense allocator memory.
-- **Request stats** from `/stats.json`: requests per second and latency by operation, per endpoint and per collection, plus pending write batches and cache hit ratio.
-- **Health and cluster state:** `typesense_health` and `typesense_raft_state` (leader or follower), so you can alert on unhealthy nodes or a cluster with no leader.
-- **Honest failures:** if Typesense can't be reached, its metrics are left out rather than reported as zeros, and a request timeout keeps a hung node from stalling scrapes.
-- **Small static image:** about 13 MB, built `FROM scratch` for linux/amd64 and linux/arm64.
-- **Batteries included:** 3 Grafana dashboards, Prometheus alert rules, and a one-command Docker Compose cluster for trying it out.
-
-## Screenshots
-
-Captured from the bundled Docker Compose stack: a 3-node cluster under generated traffic.
-
-### Typesense Metrics
-![Typesense Metrics dashboard](screenshots/Typesense-Metrics.png)
-
-### Typesense Stats
-![Typesense Stats dashboard](screenshots/Typesense-Stats.png)
-
-### Typesense By Collection
-![Typesense By Collection dashboard](screenshots/Typesense-By-Collection.png)
+| | |
+|---|---|
+| 🩺 **Health and cluster state** | `typesense_health` and `typesense_raft_state` per node. Alert on an unhealthy node, or on a cluster that has lost its leader. |
+| 📊 **System and memory** | CPU for every core, disk, memory, swap, network, and Typesense's allocator memory. |
+| ⚡ **Request stats** | Requests per second and latency for search, write, import and delete. Broken down per endpoint and per collection, plus cache hit ratio and pending write batches. |
+| 🎯 **Honest failures** | If Typesense can't be reached, its metrics are left out, never faked as zeros. A per-request timeout keeps a hung node from stalling scrapes. |
+| 📦 **Tiny image** | A static binary in a `FROM scratch` image, for linux/amd64 and linux/arm64. |
+| 🧰 **Batteries included** | 3 Grafana dashboards, Prometheus alert rules, and a one-command Docker Compose cluster for trying it all out. |
 
 ## Quick start
 
-Try the full stack (Typesense cluster, exporters, Prometheus, Grafana) locally:
+**See it working in one command.** This starts a 3-node Typesense cluster, an exporter per node, and Prometheus and Grafana:
 
-```
+```bash
 docker compose up -d --build
-./scripts/traffic.sh 300        # optional: generate traffic for the dashboards
-open http://localhost:3000      # Grafana, admin / admin
+./scripts/traffic.sh 300          # optional: generate traffic
+open http://localhost:3000        # Grafana: admin / admin
 ```
 
-Or run just the exporter against your own Typesense node:
+**Monitor your own Typesense.** Run one exporter per node:
 
-```
-docker run -p 8888:8888 \
-  -e TYPESENSE_HOST=typesense.example.com \
-  -e TYPESENSE_API_KEY=your-admin-key \
-  imatefx/typesense-prometheus-exporter
-curl localhost:8888/metrics
-```
+```bash
+docker run -d -p 8888:8888 \
+  -e TYPESENSE_HOST=typesense-1.internal \
+  -e TYPESENSE_API_KEY=<admin-api-key> \
+  imatefx/typesense-prometheus-exporter:v0.2.0
 
-## Docker Deployment
-
-### Pulling the Docker Image
-
-To pull the Typesense-Prometheus-Exporter image from Docker Hub:
-
-```
-docker pull imatefx/typesense-prometheus-exporter
+curl -s localhost:8888/metrics | grep -E '^typesense_(health|raft_state)'
 ```
 
-### Running the Docker Container
+Then add the exporters to Prometheus, and import the [dashboards](grafana/) and [alert rules](deploy/prometheus/alerts.yml). The [getting started guide](docs/getting-started.md) walks through it.
 
-To run the exporter in a Docker container, use the following command:
+## Configuration
 
-```
-docker run --name="example-ts-prom-exp" \
-           -e "TYPESENSE_HOST=tshost.example.com" \
-           -e "TYPESENSE_PROTOCOL=http" \
-           -e "TYPESENSE_API_KEY=tsAPIKEY" \
-           -e "TYPESENSE_PORT=8108" \
-           -p 8888:8888 \
-           imatefx/typesense-prometheus-exporter
-```
+| Flag | Environment variable | Default |
+|---|---|---|
+| `--typesense-host` | `TYPESENSE_HOST` | *(required)* |
+| `--typesense-api-key` | `TYPESENSE_API_KEY` | *(required)* |
+| `--typesense-port` | `TYPESENSE_PORT` | `8108` |
+| `--typesense-protocol` | `TYPESENSE_PROTOCOL` | `http` |
+| `--typesense-timeout` | `TYPESENSE_TIMEOUT` | `5` seconds; keep it below Prometheus' `scrape_timeout` |
+| `--exporter-bind-address` | `EXPORTER_BIND_ADDRESS` | `0.0.0.0` |
+| `--exporter-bind-port` | `EXPORTER_BIND_PORT` | `8888` |
 
-This command sets up the Typesense-Prometheus-Exporter with the necessary environment variables and starts the exporter service on exposed port `8888`.
+See [configuration](docs/configuration.md) for API key permissions, timeouts, failure behaviour, Prometheus and Grafana setup.
 
+## Metrics at a glance
 
-## Usage
-
-### Exposing Typesense Metrics and Stats in Prometheus Format
-
-Run the exporter with the necessary options:
-
-```
-typesense-prometheus-exporter [OPTIONS] --typesense-host <TYPESENSE_HOST> --typesense-api-key <TYPESENSE_API_KEY>
-```
-
-### Options
-
-- `--typesense-host <TYPESENSE_HOST>`: Typesense Host URL (env: TYPESENSE_HOST).
-- `--typesense-protocol <TYPESENSE_PROTOCOL>`: Typesense protocol (env: TYPESENSE_PROTOCOL, default: http).
-- `--typesense-api-key <TYPESENSE_API_KEY>`: Typesense API key (env: TYPESENSE_API_KEY).
-- `--typesense-port <TYPESENSE_PORT>`: Typesense port number (env: TYPESENSE_PORT, default: 8108).
-- `--typesense-timeout <TYPESENSE_TIMEOUT>`: Timeout for Typesense API requests in seconds (env: TYPESENSE_TIMEOUT, default: 5; 0 or less disables it). Keep it below the Prometheus scrape timeout.
-- `--exporter-bind-address <EXPORTER_BIND_ADDRESS>`: Internal server bind address (env: EXPORTER_BIND_ADDRESS, default: 0.0.0.0).
-- `--exporter-bind-port <EXPORTER_BIND_PORT>`: Internal server bind port (env: EXPORTER_BIND_PORT, default: 8888).
-
-### Help and Version
-
-- `-h, --help`: Display help.
-- `-V, --version`: Display version.
-
-## Metrics
-
-All metrics are gauges labelled with `host` and `port` (the Typesense node being scraped).
-
-| Metric | Extra labels | Source | Description |
-|---|---|---|---|
-| `typesense_health` | | `/health` | 1 if the node reports `{"ok": true}`, otherwise 0 (including unreachable) |
-| `typesense_raft_state` | | `/debug` | 1 = leader, 4 = follower, 0 = other or unreachable |
-| `typesense_metrics` | `key` | `/metrics.json` | System and Typesense memory metrics, e.g. `key="system_memory_used_bytes"`, `key="system_cpu3_active_percentage"` |
-| `typesense_stats` | `key` | `/stats.json` | Totals such as `search_latency_ms`, `write_requests_per_second`, `pending_write_batches`, `cache_hit_ratio` |
-| `typesense_stats_latency_ms` | `key` | `/stats.json` | Latency per endpoint, e.g. `key="GET /collections/products/documents/search"` |
-| `typesense_stats_requests_per_second` | `key` | `/stats.json` | Requests per second per endpoint |
-| `typesense_stats_latency_ms_by_collection` | `key`, `method`, `collection_name`, `action` | `/stats.json` | Per-endpoint latency for collection endpoints |
-| `typesense_stats_requests_per_second_by_collection` | `key`, `method`, `collection_name`, `action` | `/stats.json` | Per-endpoint requests per second for collection endpoints |
-
-The API key needs access to `/metrics.json`, `/stats.json` and `/debug`. An admin key works; `/health` needs no key.
-
-### Prometheus
-
-Run one exporter per Typesense node and scrape them all:
-
-```yaml
-scrape_configs:
-  - job_name: typesense-exporter
-    scrape_timeout: 10s   # keep above the exporter's TYPESENSE_TIMEOUT (default 5s)
-    static_configs:
-      - targets: ["exporter-1:8888", "exporter-2:8888", "exporter-3:8888"]
-```
-
-Ready-made alert rules (exporter down, unhealthy node, no raft leader) are in [`deploy/prometheus/alerts.yml`](deploy/prometheus/alerts.yml). Grafana dashboards are in [`grafana/`](grafana): import them and pick your Prometheus data source.
-
-## Local stack (Docker Compose)
-
-`docker compose up -d --build` starts a 3-node Typesense cluster with one exporter per node, plus Prometheus and Grafana. Run one exporter per Typesense node in production too: each node reports its own health, raft role and traffic.
-
-| Service | URL |
+| Metric | What it tells you |
 |---|---|
-| Grafana (dashboards provisioned) | http://localhost:3000 (admin / admin) |
-| Prometheus (with alert rules) | http://localhost:9090 |
-| Exporters | http://localhost:8888/metrics, :8889, :8890 (nodes 1–3) |
-| Typesense nodes | http://localhost:8108, :8109, :8110 (API key `local-dev-key`) |
+| `typesense_health` | 1 healthy, 0 unhealthy or unreachable |
+| `typesense_raft_state` | 1 leader, 4 follower, 0 other or unreachable |
+| `typesense_metrics{key=…}` | CPU (per core), disk, memory, swap, network, allocator memory |
+| `typesense_stats{key=…}` | Requests per second, latency, pending writes, cache hit ratio |
+| `typesense_stats_*_by_collection` | Requests per second and latency per collection and action |
 
-`scripts/traffic.sh [seconds]` generates search and write traffic across the cluster so the dashboards have something to show.
+See the [metrics reference](docs/metrics.md) for every key, with example PromQL.
 
-Set `TYPESENSE_TIMEOUT` below Prometheus' `scrape_timeout`. The stack uses 2s against 4s. Otherwise a hung node makes the whole scrape time out, and you get `TypesenseExporterDown` instead of `TypesenseUnhealthy`.
+## Alerts
 
-Override the defaults with `TYPESENSE_API_KEY` and `GRAFANA_ADMIN_PASSWORD`. Prometheus alert rules live in `deploy/prometheus/alerts.yml`:
-- `TypesenseExporterDown`: the exporter can't be scraped.
-- `TypesenseUnhealthy`: a node is unhealthy or unreachable.
-- `TypesenseNoLeader`: no node reports raft leader.
-
-## Testing
-
-| Command | What it runs |
+| Alert | Fires when |
 |---|---|
-| `make test-unit` | Unit tests (models, metric rendering, CLI) |
-| `make test-integration` | The exporter served over HTTP against a mock Typesense (healthy, follower, down, 401, timeout, malformed responses) |
-| `make e2e` | Starts the 3-node cluster stack and checks, end to end:<br>• cluster formation, with one leader and two followers<br>• per-node traffic reaching the exporters, Prometheus and Grafana<br>• leader failover<br>• a hung node, and quorum loss firing `TypesenseNoLeader`<br>• recovery |
-| `make coverage` | Unit + integration coverage via [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) (fails under 90% of lines) |
+| `TypesenseExporterDown` | Prometheus can't scrape an exporter for 1m |
+| `TypesenseUnhealthy` | A node is unhealthy or unreachable for 1m |
+| `TypesenseNoLeader` | No node is raft leader for 1m. A normal election (a few seconds) doesn't trigger it. |
 
-CI (`.github/workflows/ci.yml`) runs lint, tests with coverage, and the e2e suite on every pull request.
+## Dashboards
 
-## Building
+<details>
+<summary><b>Typesense Metrics</b>: CPU per core, disk, memory, swap, network, allocator memory</summary>
 
-- Local build: `cargo build --release`
-- Static Linux binaries for amd64 and arm64 (needs Docker with buildx): `./build-cross.sh`. Binaries are written to `releases/`.
+![Typesense Metrics dashboard](screenshots/Typesense-Metrics.png)
+</details>
 
-## Behaviour notes
+<details>
+<summary><b>Typesense Stats</b>: request rates, latency, health, raft state, cache hit ratio</summary>
 
-- `typesense_health` (1 = healthy) and `typesense_raft_state` (1 = leader, 4 = follower, 0 = other/unreachable) are always exported, so you can alert on an unhealthy node or a cluster with no leader.
-- If a Typesense endpoint is unreachable, times out, or rejects the API key, its metrics are omitted for that scrape instead of being reported as zeros. Set `--typesense-timeout` so a hung node doesn't stall the scrape.
-- Logs go to stderr via `tracing`.
+![Typesense Stats dashboard](screenshots/Typesense-Stats.png)
+</details>
+
+<details>
+<summary><b>Typesense By Collection</b>: per-collection request rate and latency</summary>
+
+![Typesense By Collection dashboard](screenshots/Typesense-By-Collection.png)
+</details>
+
+The screenshots were taken from the bundled Docker Compose stack: 3 nodes under generated traffic.
+
+## Development
+
+```bash
+make test         # lint + unit + integration tests
+make coverage     # coverage report (fails under 90%)
+make e2e          # end-to-end tests against a real 3-node cluster (needs Docker)
+make up / down    # start / stop the Docker Compose stack
+./build-cross.sh  # static linux/amd64 + linux/arm64 binaries
+```
+
+There are 38 tests in three layers. **Unit** and **integration** tests run against a mock Typesense. **End-to-end** tests run against a real cluster and break it on purpose: leader failover, a hung node, quorum loss. See [testing](docs/testing.md) for the full list.
 
 ## Contributors
 
-Thanks to everyone who has contributed to this exporter:
+Thanks to everyone who has contributed:
 
-| Contributor | Contributions |
-|---|---|
-| [Stalin Pereira (imatefx)](https://github.com/imatefx) | Creator and maintainer |
-| [Leandro (leapalazzolo)](https://github.com/leapalazzolo) | Fixed the hardcoded protocol on the stats endpoint ([#4](https://github.com/imatefx/typesense-prometheus-exporter/pull/4)) |
-| [Andrii Maryskevych (andriimredocly)](https://github.com/andriimredocly) | Multi-platform Docker builds with ARM64 ([#10](https://github.com/imatefx/typesense-prometheus-exporter/pull/10)); health, raft state and request timeout ([#13](https://github.com/imatefx/typesense-prometheus-exporter/pull/13)) |
-| [weriomat](https://github.com/weriomat) | Optional CPU metrics for hosts that don't report them ([#11](https://github.com/imatefx/typesense-prometheus-exporter/pull/11)) |
-| [Sebastian Caldarola (scaldarola)](https://github.com/scaldarola) | Proposed scraping multiple Typesense hosts from one exporter ([#14](https://github.com/imatefx/typesense-prometheus-exporter/pull/14)) |
-| [cyppe](https://github.com/cyppe) | Per-core CPU metrics for any core count, swap memory and cache hit ratio ([#15](https://github.com/imatefx/typesense-prometheus-exporter/pull/15)) |
+<table>
+  <tr>
+    <td align="center"><a href="https://github.com/imatefx"><img src="https://github.com/imatefx.png?size=80" width="64" alt=""><br><sub><b>Stalin Pereira</b></sub></a><br><sub>Creator and maintainer</sub></td>
+    <td align="center"><a href="https://github.com/leapalazzolo"><img src="https://github.com/leapalazzolo.png?size=80" width="64" alt=""><br><sub><b>Leandro</b></sub></a><br><sub>Stats protocol fix (<a href="https://github.com/imatefx/typesense-prometheus-exporter/pull/4">#4</a>)</sub></td>
+    <td align="center"><a href="https://github.com/andriimredocly"><img src="https://github.com/andriimredocly.png?size=80" width="64" alt=""><br><sub><b>Andrii Maryskevych</b></sub></a><br><sub>Multi-arch Docker (<a href="https://github.com/imatefx/typesense-prometheus-exporter/pull/10">#10</a>), health and raft (<a href="https://github.com/imatefx/typesense-prometheus-exporter/pull/13">#13</a>)</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="https://github.com/weriomat"><img src="https://github.com/weriomat.png?size=80" width="64" alt=""><br><sub><b>weriomat</b></sub></a><br><sub>Optional CPU metrics (<a href="https://github.com/imatefx/typesense-prometheus-exporter/pull/11">#11</a>)</sub></td>
+    <td align="center"><a href="https://github.com/scaldarola"><img src="https://github.com/scaldarola.png?size=80" width="64" alt=""><br><sub><b>Sebastian Caldarola</b></sub></a><br><sub>Multi-host proposal (<a href="https://github.com/imatefx/typesense-prometheus-exporter/pull/14">#14</a>)</sub></td>
+    <td align="center"><a href="https://github.com/cyppe"><img src="https://github.com/cyppe.png?size=80" width="64" alt=""><br><sub><b>cyppe</b></sub></a><br><sub>Per-core CPU, swap, cache ratio (<a href="https://github.com/imatefx/typesense-prometheus-exporter/pull/15">#15</a>)</sub></td>
+  </tr>
+</table>
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) © Stalin Pereira
