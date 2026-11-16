@@ -4,8 +4,8 @@ Three layers, from fast and isolated to slow and real:
 
 | Layer | Where | Runs against | Count | Time | Needs |
 |---|---|---|---|---|---|
-| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 115 | < 1s | Rust |
-| Integration | [`tests/exporter.rs`](../tests/exporter.rs), [`tests/config_env.rs`](../tests/config_env.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 75 | ~1s | Rust |
+| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 120 | < 1s | Rust |
+| Integration | [`tests/exporter.rs`](../tests/exporter.rs), [`tests/config_env.rs`](../tests/config_env.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 77 | ~1s | Rust |
 | End-to-end | [`tests/e2e.rs`](../tests/e2e.rs) | A real 3-node Typesense cluster, one exporter, Prometheus and Grafana in Docker | 10 | ~3–5 min per Typesense version | Rust, Docker |
 
 ```bash
@@ -142,6 +142,9 @@ The 1.0 names ([design](metrics-v1.md)) and the `--metric-names` modes:
 | `startup_fails_on_an_unusable_file` | A missing or empty key file is an error at startup |
 | `reloads_are_counted_and_a_failure_is_flagged_until_the_next_good_read` | An observed key file: a bad rewrite sets `key_reload_failing` to 1 and counts a failed attempt per retry, the old key stays in use, a good rewrite counts an `ok` and sets it back to 0 |
 | `a_fixed_key_has_nothing_to_observe` | A key from a flag or environment variable gets no reload series |
+| `a_watched_file_is_flagged_without_anyone_using_the_key` | The background check (10ms here) flags an emptied key file and clears it after a good rewrite, with no call to `current()`; dropping the watcher stops it |
+| `nothing_is_watched_for_fixed_keys` | `watch` starts no task when no key is file-backed |
+| `nothing_is_watched_without_a_runtime` | `watch` returns nothing outside a tokio runtime instead of panicking |
 
 ### Exporter metrics: `src/exporter_metrics.rs`
 
@@ -151,7 +154,9 @@ The 1.0 names ([design](metrics-v1.md)) and the `--metric-names` modes:
 | `scrapes_count_by_handler_and_result` | Refused, invalid, ok and not found are counted per handler; every outcome a handler can produce starts at 0 |
 | `no_series_carries_a_target_or_node_label` | A refused scrape adds no `target`, `host`, `port` or `instance` label |
 | `requests_count_and_observe_a_duration_per_endpoint` | A Typesense request adds to its `endpoint`/`result` counter and to that endpoint's histogram (count, bucket, sum) |
-| `probes_in_flight_goes_up_and_back_and_waits_are_observed` | The in-flight gauge follows its guards; a slot wait lands in the right bucket |
+| `probes_in_flight_goes_up_and_back_and_waits_are_observed` | The in-flight gauge follows its guards; the waiting gauge is 1 while queued and 0 after; a slot wait lands in the right bucket |
+| `a_dropped_guard_counts_a_cancelled_scrape_and_its_wait` | A `ScrapeGuard` dropped while queued counts `cancelled`, observes its wait and clears `probes_waiting`; a finished one counts its own result (`unavailable`) |
+| `an_unknown_endpoint_is_caught_in_debug_builds` | An endpoint outside `ENDPOINTS` trips the `debug_assert` instead of creating an uninitialised series |
 | `key_reload_gauge_flips_on_failure_and_back` | Failures count and set the gauge to 1; a good reload counts and sets it to 0 |
 | `a_key_that_is_not_observed_has_no_series` | Without a file-backed key there are no key reload series |
 
@@ -272,6 +277,8 @@ The exporter runs with the default `--metric-names=v1` unless a test says otherw
 | `exporter_metrics_count_a_metrics_scrape_without_a_host_as_not_found` | `/metrics` on an exporter without a host | 404, counted as `metrics`/`not_found` |
 | `exporter_metrics_split_typesense_requests_into_ok_error_and_timeout` | Four endpoints hang past a 1s timeout, two return 404 | `timeout` for the four, `error` for the two, and a duration of about the limit |
 | `exporter_metrics_show_probes_in_flight_and_slot_waits` | Two probes with `--probe-max-concurrency 1`, a metrics read in between | One in flight while one waits, 0 afterwards; two slot waits observed, the second at least 0.3s |
+| `exporter_metrics_count_a_probe_cancelled_while_waiting_for_a_slot` | `--probe-max-concurrency 1`, a slow node, a second probe whose client is aborted while queued | `probes_waiting` 1 while queued, then 0; `scrapes_total{probe,cancelled}` 1; the cancelled probe's wait (at least 0.3s) is in the slot-wait histogram; the first probe still finishes `ok` |
+| `exporter_metrics_count_typesense_requests_cancelled_in_flight` | A probe client aborted while the node is still answering | The probe is `cancelled`, and so are the requests it had in flight (`ok` stays 0) |
 | `exporter_metrics_follow_a_key_file_failing_and_recovering` | The key file is emptied, then rewritten | `key_reload_failing{key="default"}` 0, then 1 with failed reloads counted, then 0 and one `ok`; no key in the output |
 | `exporter_metrics_name_a_cluster_key_by_its_cluster` | A cluster's key file is emptied | `key_reload_failing{key="prod"}` is 1 and there is no `default` series |
 | `every_blank_environment_variable_counts_as_unset` (`tests/config_env.rs`) | Every option's variable set to a blank value | The file's value for every option; without a file, the built-in defaults |
@@ -295,7 +302,7 @@ These run against the [Docker Compose stack](architecture.md#docker-compose-stac
 | `cluster_has_one_leader_and_two_followers` | Probes every node through the exporter and reads Prometheus | All nodes healthy; roles are one leader and two followers; each probe reports only its own node; 1.0 system metrics (`typesense_system_memory_total_bytes`) and no 0.4 `typesense_metrics`/`typesense_stats`; Typesense version, committed raft index and queued writes from every node; every probe reads all six endpoints (`typesense_scrape_success` 1); all 3 probes up |
 | `traffic_is_reported_by_the_node_that_served_it` | Creates a collection through node 1 and searches every node, some searches with `use_cache=true` | Documents replicate to every node; every exporter reports 3 documents in the collection; reads by document ID show up as one `typesense_route_requests_per_second` series with `documents/:id`, never raw IDs; each exporter reports the search traffic its own node served; `typesense_request_latency_seconds` reports search quantiles 0.95, 0.99 and 1 (max); `cache_hit_ratio` goes above 0 |
 | `followers_catch_up_and_replication_lag_returns_to_zero` | Writes 20 documents through node 1 | Every node's committed raft index moves past the writes; replication lag (max − min committed index) returns to 0; every node reports 23 documents |
-| `prometheus_loads_the_alert_rules` | Reads Prometheus rules and alerts | All seven rules loaded; no alerts while the cluster is healthy (`TypesenseExporterProbeRefused` is ignored: the allow-list scenario refuses targets on purpose) |
+| `prometheus_loads_the_alert_rules` | Reads Prometheus rules and alerts | All eight rules loaded; no alerts while the cluster is healthy (`TypesenseExporterProbeRefused` on `exporter:8888` is ignored: the allow-list scenario refuses targets on purpose) |
 | `grafana_dashboards_show_every_node` | Queries Grafana's data source, the same path the panels use | Data source healthy; all four dashboards provisioned; per-core CPU (`typesense_system_cpu_core_active_ratio`), network received rate, raft state and health return data for all three nodes |
 | `leader_failure_is_reported_and_a_new_leader_is_elected` | Stops the current leader | Stopped node reports health 0 and raft 0; a different node becomes leader; `TypesenseUnhealthy` goes pending; `TypesenseNoLeader` never fires during the election and clears afterwards |
 | `hung_node_and_quorum_loss_raise_no_leader` | Stops one follower and **pauses** (freezes) the other, so 2 of 3 nodes are gone | The frozen node's probe answers in under 4s (the scrape timeout), reports health 0 and every endpoint as failed; all probes still up; no node reports leader; `TypesenseNoLeader` goes pending |

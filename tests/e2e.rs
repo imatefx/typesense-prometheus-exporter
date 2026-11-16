@@ -683,6 +683,7 @@ async fn prometheus_loads_the_alert_rules() {
             "TypesenseExporterKeyReloadFailing",
             "TypesenseExporterProbeRefused",
             "TypesenseExporterProbesSaturated",
+            "TypesenseExporterSelfMetricsDown",
             "TypesenseNoLeader",
             "TypesenseScrapeFailing",
             "TypesenseUnhealthy"
@@ -696,11 +697,15 @@ async fn prometheus_loads_the_alert_rules() {
         || async {
             // probe_refuses_targets_outside_the_allow_list refuses targets on
             // purpose, and TypesenseExporterProbeRefused then stays active for
-            // the 10m of its increase() window.
+            // the 10m of its increase() window. Only that exporter's alert is
+            // expected; the same alert on another instance is a real failure.
             let active: Vec<Value> = alerts()
                 .await?
                 .into_iter()
-                .filter(|a| a["labels"]["alertname"] != "TypesenseExporterProbeRefused")
+                .filter(|a| {
+                    !(a["labels"]["alertname"] == "TypesenseExporterProbeRefused"
+                        && a["labels"]["instance"] == "exporter:8888")
+                })
                 .collect();
             ensure(active.is_empty(), format!("still active: {active:?}"))
         },

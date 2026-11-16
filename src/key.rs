@@ -1,7 +1,8 @@
 //! A Typesense API key that, when it comes from a file, follows that file.
 //!
 //! Rotating a key (for example a Kubernetes Secret update) rewrites the file;
-//! polling its metadata on use avoids a restart without a file-watcher.
+//! polling its metadata on use (and every few seconds, see [`watch`]) avoids a
+//! restart without a file-watcher.
 //! The lock is only held to read or update the cached state, never across
 //! file system calls, so a hung mount can't block other callers.
 
@@ -16,6 +17,9 @@ use crate::exporter_metrics::{ExporterMetrics, ReloadObserver};
 
 /// How often a key file's metadata is looked at, at most.
 const CHECK_INTERVAL: Duration = Duration::from_secs(1);
+
+/// How often [`watch`] looks at the key files of the running exporter.
+pub const WATCH_INTERVAL: Duration = Duration::from_secs(5);
 
 /// What tells a rewritten file from an unchanged one: modified time and
 /// length, plus, on unix, the inode, device and change time, which also catch
@@ -109,6 +113,43 @@ impl KeySource {
             Inner::File(file) => file.current(),
         }
     }
+}
+
+/// Aborts the background check of key files when dropped.
+pub struct Watcher(tokio::task::JoinHandle<()>);
+
+impl Drop for Watcher {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Check every file-backed key in `sources` each `every`, so a rotated key
+/// that can't be read shows up in `key_reload_failing` even when nothing is
+/// scraped with it. A check reads only metadata unless the file changed.
+/// `None` when no source is file-backed or there is no tokio runtime.
+pub fn watch(sources: &[KeySource], every: Duration) -> Option<Watcher> {
+    let files: Vec<KeySource> = sources
+        .iter()
+        .filter(|s| matches!(&*s.inner, Inner::File(_)))
+        .cloned()
+        .collect();
+    if files.is_empty() {
+        return None;
+    }
+    let runtime = tokio::runtime::Handle::try_current().ok()?;
+    Some(Watcher(runtime.spawn(async move {
+        let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            for source in &files {
+                let source = source.clone();
+                // Off the async threads: a hung mount must not stall them.
+                let _ = tokio::task::spawn_blocking(move || source.current()).await;
+            }
+        }
+    })))
 }
 
 impl FileKey {
@@ -429,5 +470,59 @@ mod tests {
         let m = ExporterMetrics::new();
         KeySource::fixed("k".into()).observe_reloads("default", &m);
         assert!(!m.render().contains("key_reload"));
+    }
+
+    #[tokio::test]
+    async fn a_watched_file_is_flagged_without_anyone_using_the_key() {
+        let d = dir("watched");
+        let f = d.join("key");
+        std::fs::write(&f, "old\n").unwrap();
+        let m = ExporterMetrics::new();
+        let s = KeySource::file_with_interval(&f, Duration::ZERO).unwrap();
+        s.observe_reloads("default", &m);
+        let watcher = watch(
+            &[s.clone(), KeySource::fixed("k".into())],
+            Duration::from_millis(10),
+        );
+        assert!(watcher.is_some());
+        std::fs::write(&f, "").unwrap();
+        let failing = |m: &ExporterMetrics| {
+            m.render()
+                .contains("typesense_exporter_key_reload_failing{key=\"default\"} 1")
+        };
+        for _ in 0..200 {
+            if failing(&m) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(failing(&m), "{}", m.render());
+        std::fs::write(&f, "newer\n").unwrap();
+        for _ in 0..200 {
+            if !failing(&m) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(!failing(&m));
+        // Dropping the watcher stops the checks.
+        drop(watcher);
+        std::fs::write(&f, "").unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!failing(&m));
+    }
+
+    #[tokio::test]
+    async fn nothing_is_watched_for_fixed_keys() {
+        assert!(watch(&[KeySource::fixed("k".into())], Duration::from_millis(10)).is_none());
+    }
+
+    #[test]
+    fn nothing_is_watched_without_a_runtime() {
+        let d = dir("noruntime");
+        let f = d.join("key");
+        std::fs::write(&f, "k").unwrap();
+        let s = KeySource::file(&f).unwrap();
+        assert!(watch(&[s], Duration::from_millis(10)).is_none());
     }
 }

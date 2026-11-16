@@ -8,9 +8,11 @@ kubectl apply -k deploy/kubernetes/cluster-probe
 
 The namespace `typesense` appears in `kustomization.yaml`, in the node names in `configmap.yaml` and `probe.yaml` (`typesense-0.typesense.typesense.svc`: pod, headless Service, namespace) and in the prober URL. Change all of them for another namespace.
 
+`servicemonitor.yaml` scrapes the exporter's own health (`/exporter/metrics`) as the job `typesense-exporter-self`, which the exporter alerts in [`alerts.yml`](../../prometheus/alerts.yml) need; `TypesenseExporterSelfMetricsDown` fires if it stops working.
+
 ## Plain Prometheus, without the operator
 
-Skip `probe.yaml` (remove it from `kustomization.yaml`) and add a scrape job, in the same style as the [main README](../../../README.md#quick-start). `typesense-exporter.typesense.svc:8888` is the exporter Service:
+Skip `probe.yaml` and `servicemonitor.yaml` (remove them from `kustomization.yaml`) and add a scrape job, in the same style as the [main README](../../../README.md#quick-start). `typesense-exporter.typesense.svc:8888` is the exporter Service:
 
 ```yaml
 scrape_configs:

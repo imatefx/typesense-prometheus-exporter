@@ -2045,6 +2045,130 @@ async fn exporter_metrics_show_probes_in_flight_and_slot_waits() {
     );
 }
 
+/// Poll `/exporter/metrics` until `done` holds (the server notices a closed
+/// connection a moment after the client drops it).
+async fn exporter_metrics_until(base: &str, done: impl Fn(&str) -> bool) -> String {
+    let mut out = exporter_metrics(base).await;
+    for _ in 0..100 {
+        if done(&out) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        out = exporter_metrics(base).await;
+    }
+    out
+}
+
+#[tokio::test]
+async fn exporter_metrics_count_a_probe_cancelled_while_waiting_for_a_slot() {
+    let node = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"ok": true}))
+                .set_delay(Duration::from_millis(1500)),
+        )
+        .mount(&node)
+        .await;
+    let target = node_addr(&node);
+    let mut args = args_for("unused", 1, 0);
+    args.typesense_host = None;
+    args.probe_allowed_targets = vec![target.clone()];
+    args.probe_max_concurrency = 1;
+    let base = spawn_exporter(args).await;
+
+    let first = {
+        let (base, target) = (base.clone(), target.clone());
+        tokio::spawn(async move { probe(&base, &target).await })
+    };
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Prometheus giving up at scrape_timeout: the client drops the connection.
+    let second = {
+        let (base, target) = (base.clone(), target.clone());
+        tokio::spawn(async move { probe(&base, &target).await })
+    };
+    let queued = exporter_metrics_until(&base, |o| {
+        gauge(o, "typesense_exporter_probes_waiting") == Some(1.0)
+    })
+    .await;
+    assert_eq!(
+        gauge(&queued, "typesense_exporter_probes_waiting"),
+        Some(1.0)
+    );
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    second.abort();
+
+    let out = exporter_metrics_until(&base, |o| {
+        scrapes_total(o, "probe", "cancelled") == Some(1.0)
+    })
+    .await;
+    assert_eq!(
+        scrapes_total(&out, "probe", "cancelled"),
+        Some(1.0),
+        "{out}"
+    );
+    assert_eq!(gauge(&out, "typesense_exporter_probes_waiting"), Some(0.0));
+    assert_eq!(
+        gauge(&out, "typesense_exporter_probes_in_flight"),
+        Some(1.0),
+        "only the first probe runs"
+    );
+    // The first probe took its slot at once; the cancelled one still reports
+    // how long it queued.
+    assert_eq!(
+        gauge(&out, "typesense_exporter_probe_slot_wait_seconds_count"),
+        Some(2.0)
+    );
+    let waited = gauge(&out, "typesense_exporter_probe_slot_wait_seconds_sum").unwrap();
+    assert!(waited >= 0.3, "{waited}");
+    // The probe that held the slot finishes normally.
+    let (status, _) = first.await.unwrap();
+    assert_eq!(status, 200);
+    let out = exporter_metrics(&base).await;
+    assert_eq!(scrapes_total(&out, "probe", "ok"), Some(1.0));
+    assert_eq!(scrapes_total(&out, "probe", "cancelled"), Some(1.0));
+}
+
+#[tokio::test]
+async fn exporter_metrics_count_typesense_requests_cancelled_in_flight() {
+    let node = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"ok": true}))
+                .set_delay(Duration::from_secs(5)),
+        )
+        .mount(&node)
+        .await;
+    let target = node_addr(&node);
+    let mut args = args_for("unused", 1, 0);
+    args.typesense_host = None;
+    args.probe_allowed_targets = vec![target.clone()];
+    let base = spawn_exporter(args).await;
+
+    let hung = {
+        let base = base.clone();
+        tokio::spawn(async move { probe(&base, &target).await })
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    hung.abort();
+
+    let out = exporter_metrics_until(&base, |o| {
+        scrapes_total(o, "probe", "cancelled") == Some(1.0)
+    })
+    .await;
+    assert_eq!(
+        scrapes_total(&out, "probe", "cancelled"),
+        Some(1.0),
+        "{out}"
+    );
+    for endpoint in ["/metrics.json", "/health", "/collections"] {
+        assert_eq!(requests_total(&out, endpoint, "cancelled"), Some(1.0));
+        assert_eq!(requests_total(&out, endpoint, "ok"), Some(0.0));
+    }
+    assert_eq!(scrapes_total(&out, "probe", "ok"), Some(0.0));
+}
+
 #[tokio::test]
 async fn exporter_metrics_follow_a_key_file_failing_and_recovering() {
     let mock = key_recording_node().await;

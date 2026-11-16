@@ -51,6 +51,8 @@ struct AppState {
     probe_slots: tokio::sync::Semaphore,
     /// The exporter's own metrics, served at `/exporter/metrics`.
     exporter: ExporterMetrics,
+    /// Checks the key files in the background; stops when the state is dropped.
+    _key_watcher: Option<crate::key::Watcher>,
 }
 
 /// Build the exporter's HTTP router for the node(s) described by `args`.
@@ -150,6 +152,13 @@ pub fn router(args: &CliArgs) -> std::io::Result<Router> {
             .observe_reloads(&cluster.name, &exporter);
     }
 
+    let key_sources: Vec<KeySource> = api_key
+        .iter()
+        .cloned()
+        .chain(clusters.clusters.iter().map(|c| c.key_source().clone()))
+        .collect();
+    let key_watcher = crate::key::watch(&key_sources, crate::key::WATCH_INTERVAL);
+
     let state = Arc::new(AppState {
         http,
         api_key,
@@ -163,6 +172,7 @@ pub fn router(args: &CliArgs) -> std::io::Result<Router> {
         plaintext_warned: Mutex::default(),
         probe_slots: tokio::sync::Semaphore::new(args.probe_max_concurrency as usize),
         exporter,
+        _key_watcher: key_watcher,
     });
 
     Ok(Router::new()
@@ -289,6 +299,7 @@ async fn root() -> &'static str {
 async fn metrics_handler(State(state): State<Arc<AppState>>) -> (StatusCode, String) {
     match &state.node {
         Some(node) => {
+            let guard = state.exporter.scrape_guard(Handler::Metrics);
             let body = scrape(
                 &TypesenseClient::new(
                     state.http.clone(),
@@ -302,9 +313,7 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> (StatusCode, Str
                 &state.exporter,
             )
             .await;
-            state
-                .exporter
-                .record_scrape(Handler::Metrics, ScrapeResult::Ok);
+            guard.finish(ScrapeResult::Ok);
             (StatusCode::OK, body)
         }
         None => {
@@ -422,16 +431,18 @@ async fn probe_handler(
         );
     }
 
-    let waiting = Instant::now();
+    // Dropped with the handler future if the caller hangs up while queued
+    // (Prometheus at scrape_timeout), so the wait and the cancel are counted.
+    let mut guard = state.exporter.scrape_guard(Handler::Probe);
+    guard.wait_for_slot();
     let Ok(_slot) = state.probe_slots.acquire().await else {
+        guard.finish(ScrapeResult::Unavailable);
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             "exporter shutting down\n".to_string(),
         );
     };
-    state
-        .exporter
-        .observe_slot_wait(waiting.elapsed().as_secs_f64());
+    guard.slot_acquired();
     let _in_flight = state.exporter.probe_started();
     let client = TypesenseClient::new(state.http.clone(), target.base_url(), api_key.current());
     let body = scrape(
@@ -443,9 +454,7 @@ async fn probe_handler(
         &state.exporter,
     )
     .await;
-    state
-        .exporter
-        .record_scrape(Handler::Probe, ScrapeResult::Ok);
+    guard.finish(ScrapeResult::Ok);
     (StatusCode::OK, body)
 }
 
@@ -515,12 +524,36 @@ async fn timed<T>(
     endpoint: &'static str,
     request: impl std::future::Future<Output = reqwest::Result<T>>,
 ) -> reqwest::Result<T> {
-    let started = Instant::now();
+    // If the caller hangs up, this future is dropped at the await below.
+    struct Cancelled<'a> {
+        exporter: &'a ExporterMetrics,
+        endpoint: &'static str,
+        started: Instant,
+        done: bool,
+    }
+    impl Drop for Cancelled<'_> {
+        fn drop(&mut self) {
+            if !self.done {
+                self.exporter.observe_request(
+                    self.endpoint,
+                    RequestResult::Cancelled,
+                    self.started.elapsed().as_secs_f64(),
+                );
+            }
+        }
+    }
+    let mut pending = Cancelled {
+        exporter,
+        endpoint,
+        started: Instant::now(),
+        done: false,
+    };
     let result = request.await;
+    pending.done = true;
     exporter.observe_request(
         endpoint,
         RequestResult::of(&result),
-        started.elapsed().as_secs_f64(),
+        pending.started.elapsed().as_secs_f64(),
     );
     result
 }

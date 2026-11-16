@@ -6,6 +6,8 @@
 //! one of a fixed set, a Typesense path, or a cluster name from the config
 //! file.
 
+use std::time::Instant;
+
 use prometheus::{
     Histogram, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge, IntGaugeVec, Opts,
     Registry, TextEncoder,
@@ -33,21 +35,38 @@ pub enum Handler {
     Probe,
 }
 
-/// How a scrape ended, by HTTP status: 200, 403, 400, 404.
+/// How a scrape ended, by HTTP status: 200, 403, 400, 404, 503; or
+/// `Cancelled` when the caller hung up before it finished.
 #[derive(Clone, Copy, Debug)]
 pub enum ScrapeResult {
     Ok,
     Refused,
     Invalid,
     NotFound,
+    Unavailable,
+    Cancelled,
 }
 
-/// How one Typesense request ended.
+impl ScrapeResult {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Refused => "refused",
+            Self::Invalid => "invalid",
+            Self::NotFound => "not_found",
+            Self::Unavailable => "unavailable",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+/// How one Typesense request ended; `Cancelled` when the caller hung up first.
 #[derive(Clone, Copy, Debug)]
 pub enum RequestResult {
     Ok,
     Error,
     Timeout,
+    Cancelled,
 }
 
 impl RequestResult {
@@ -66,6 +85,7 @@ pub struct ExporterMetrics {
     typesense_requests: IntCounterVec,
     typesense_duration: HistogramVec,
     in_flight: IntGauge,
+    waiting: IntGauge,
     slot_wait: Histogram,
     key_reloads: IntCounterVec,
     key_failing: IntGaugeVec,
@@ -97,6 +117,56 @@ pub struct InFlight(IntGauge);
 impl Drop for InFlight {
     fn drop(&mut self) {
         self.0.dec();
+    }
+}
+
+/// Created when a scrape starts. If the caller hangs up (hyper drops the
+/// handler future) before [`finish`](Self::finish), dropping it records the
+/// scrape as `cancelled` and, if it was still queued, the time it waited.
+pub struct ScrapeGuard {
+    scrapes: IntCounterVec,
+    handler: &'static str,
+    waiting: IntGauge,
+    slot_wait: Histogram,
+    queued_since: Option<Instant>,
+    finished: bool,
+}
+
+impl ScrapeGuard {
+    /// The scrape starts queueing for a `--probe-max-concurrency` slot.
+    pub fn wait_for_slot(&mut self) {
+        self.waiting.inc();
+        self.queued_since = Some(Instant::now());
+    }
+
+    /// The slot is taken: the wait is over and observed.
+    pub fn slot_acquired(&mut self) {
+        self.stop_waiting();
+    }
+
+    pub fn finish(mut self, result: ScrapeResult) {
+        self.finished = true;
+        self.scrapes
+            .with_label_values(&[self.handler, result.label()])
+            .inc();
+    }
+
+    fn stop_waiting(&mut self) {
+        if let Some(since) = self.queued_since.take() {
+            self.slot_wait.observe(since.elapsed().as_secs_f64());
+            self.waiting.dec();
+        }
+    }
+}
+
+impl Drop for ScrapeGuard {
+    fn drop(&mut self) {
+        self.stop_waiting();
+        if !self.finished {
+            self.scrapes
+                .with_label_values(&[self.handler, ScrapeResult::Cancelled.label()])
+                .inc();
+        }
     }
 }
 
@@ -135,9 +205,12 @@ impl ExporterMetrics {
         for (handler, result) in [
             ("metrics", "ok"),
             ("metrics", "not_found"),
+            ("metrics", "cancelled"),
             ("probe", "ok"),
             ("probe", "refused"),
             ("probe", "invalid"),
+            ("probe", "unavailable"),
+            ("probe", "cancelled"),
         ] {
             scrapes.with_label_values(&[handler, result]);
         }
@@ -158,7 +231,7 @@ impl ExporterMetrics {
         .expect("valid metric");
         register(Box::new(typesense_duration.clone()));
         for endpoint in ENDPOINTS {
-            for result in ["ok", "error", "timeout"] {
+            for result in ["ok", "error", "timeout", "cancelled"] {
                 typesense_requests.with_label_values(&[endpoint, result]);
             }
             typesense_duration.with_label_values(&[endpoint]);
@@ -170,6 +243,12 @@ impl ExporterMetrics {
         )
         .expect("valid metric");
         register(Box::new(in_flight.clone()));
+        let waiting = IntGauge::new(
+            "typesense_exporter_probes_waiting",
+            "/probe scrapes queued for a --probe-max-concurrency slot now",
+        )
+        .expect("valid metric");
+        register(Box::new(waiting.clone()));
         let slot_wait = Histogram::with_opts(
             HistogramOpts::new(
                 "typesense_exporter_probe_slot_wait_seconds",
@@ -201,6 +280,7 @@ impl ExporterMetrics {
             typesense_requests,
             typesense_duration,
             in_flight,
+            waiting,
             slot_wait,
             key_reloads,
             key_failing,
@@ -212,13 +292,9 @@ impl ExporterMetrics {
             Handler::Metrics => "metrics",
             Handler::Probe => "probe",
         };
-        let result = match result {
-            ScrapeResult::Ok => "ok",
-            ScrapeResult::Refused => "refused",
-            ScrapeResult::Invalid => "invalid",
-            ScrapeResult::NotFound => "not_found",
-        };
-        self.scrapes.with_label_values(&[handler, result]).inc();
+        self.scrapes
+            .with_label_values(&[handler, result.label()])
+            .inc();
     }
 
     /// `endpoint` must be one of [`ENDPOINTS`].
@@ -227,7 +303,12 @@ impl ExporterMetrics {
             RequestResult::Ok => "ok",
             RequestResult::Error => "error",
             RequestResult::Timeout => "timeout",
+            RequestResult::Cancelled => "cancelled",
         };
+        debug_assert!(
+            ENDPOINTS.contains(&endpoint),
+            "{endpoint} is not in ENDPOINTS, so its series would not start at 0"
+        );
         self.typesense_requests
             .with_label_values(&[endpoint, result])
             .inc();
@@ -241,8 +322,19 @@ impl ExporterMetrics {
         InFlight(self.in_flight.clone())
     }
 
-    pub fn observe_slot_wait(&self, seconds: f64) {
-        self.slot_wait.observe(seconds);
+    /// Counts a `/metrics` or `/probe` scrape as cancelled unless finished.
+    pub fn scrape_guard(&self, handler: Handler) -> ScrapeGuard {
+        ScrapeGuard {
+            scrapes: self.scrapes.clone(),
+            handler: match handler {
+                Handler::Metrics => "metrics",
+                Handler::Probe => "probe",
+            },
+            waiting: self.waiting.clone(),
+            slot_wait: self.slot_wait.clone(),
+            queued_since: None,
+            finished: false,
+        }
     }
 
     /// The counters for one file-backed key; its series start at 0.
@@ -361,12 +453,50 @@ mod tests {
         drop(a);
         drop(b);
         assert_eq!(value(&m.render(), in_flight), Some(0.0));
-        m.observe_slot_wait(0.3);
+        let mut g = m.scrape_guard(Handler::Probe);
+        g.wait_for_slot();
+        assert_eq!(
+            value(&m.render(), "typesense_exporter_probes_waiting"),
+            Some(1.0)
+        );
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        g.slot_acquired();
+        g.finish(ScrapeResult::Ok);
         let t = m.render();
+        assert_eq!(value(&t, "typesense_exporter_probes_waiting"), Some(0.0));
         let w = "typesense_exporter_probe_slot_wait_seconds";
         assert_eq!(value(&t, &format!("{w}_count")), Some(1.0));
         assert_eq!(value(&t, &format!("{w}_bucket{{le=\"0.1\"}}")), Some(0.0));
-        assert_eq!(value(&t, &format!("{w}_bucket{{le=\"0.5\"}}")), Some(1.0));
+        assert_eq!(value(&t, &format!("{w}_bucket{{le=\"1\"}}")), Some(1.0));
+    }
+
+    #[test]
+    fn a_dropped_guard_counts_a_cancelled_scrape_and_its_wait() {
+        let m = ExporterMetrics::new();
+        let mut g = m.scrape_guard(Handler::Probe);
+        g.wait_for_slot();
+        drop(g);
+        let t = m.render();
+        let s =
+            |h, r| format!("typesense_exporter_scrapes_total{{handler=\"{h}\",result=\"{r}\"}}");
+        assert_eq!(value(&t, &s("probe", "cancelled")), Some(1.0));
+        assert_eq!(value(&t, &s("probe", "ok")), Some(0.0));
+        assert_eq!(value(&t, "typesense_exporter_probes_waiting"), Some(0.0));
+        assert_eq!(
+            value(&t, "typesense_exporter_probe_slot_wait_seconds_count"),
+            Some(1.0)
+        );
+        m.scrape_guard(Handler::Probe)
+            .finish(ScrapeResult::Unavailable);
+        let t = m.render();
+        assert_eq!(value(&t, &s("probe", "unavailable")), Some(1.0));
+        assert_eq!(value(&t, &s("probe", "cancelled")), Some(1.0));
+    }
+
+    #[test]
+    #[should_panic(expected = "not in ENDPOINTS")]
+    fn an_unknown_endpoint_is_caught_in_debug_builds() {
+        ExporterMetrics::new().observe_request("/helth", RequestResult::Ok, 0.1);
     }
 
     #[test]
