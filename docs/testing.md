@@ -4,8 +4,8 @@ Three layers, from fast and isolated to slow and real:
 
 | Layer | Where | Runs against | Count | Time | Needs |
 |---|---|---|---|---|---|
-| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 95 | < 1s | Rust |
-| Integration | [`tests/exporter.rs`](../tests/exporter.rs), [`tests/config_env.rs`](../tests/config_env.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 59 | ~1s | Rust |
+| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 98 | < 1s | Rust |
+| Integration | [`tests/exporter.rs`](../tests/exporter.rs), [`tests/config_env.rs`](../tests/config_env.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 60 | ~1s | Rust |
 | End-to-end | [`tests/e2e.rs`](../tests/e2e.rs) | A real 3-node Typesense cluster, one exporter, Prometheus and Grafana in Docker | 9 | ~3–5 min | Rust, Docker |
 
 ```bash
