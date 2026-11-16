@@ -158,6 +158,8 @@ Two more workflows check every pull request:
 
 On a version tag, both workflows run `cargo test --locked` first, and publish nothing if it fails.
 
+[Dependabot](../.github/dependabot.yml) opens grouped weekly updates for Rust crates, GitHub Actions and the Docker base image, so they go through all of the above. Actions are pinned to commit SHAs, and Dependabot keeps those current.
+
 ## Adding tests
 
 - **Pure logic** (parsing, rendering): add a unit test next to the code.
