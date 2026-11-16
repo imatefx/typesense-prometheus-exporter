@@ -77,6 +77,8 @@ pub(crate) fn parse_authority(s: &str, default_port: u16) -> Result<(String, u16
             Some((host, port)) => (host.to_ascii_lowercase(), Some(port)),
         }
     };
+    // `ts.example.` is the same node as `ts.example`.
+    let host = host.strip_suffix('.').map_or(host.clone(), str::to_string);
 
     if !valid_host(&host) {
         return Err("invalid host".to_string());
@@ -108,12 +110,18 @@ fn url_host(host: &str) -> String {
     }
 }
 
-/// Lowercase a configured host and drop IPv6 brackets, so it compares equal to
-/// a parsed target's host.
+/// Lowercase a configured host, drop IPv6 brackets, write IPv6 addresses
+/// canonically and drop one trailing dot, so it compares equal to a parsed
+/// target's host.
 pub fn normalize_host(host: &str) -> String {
-    host.trim_start_matches('[')
-        .trim_end_matches(']')
-        .to_ascii_lowercase()
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    match host.parse::<Ipv6Addr>() {
+        Ok(addr) => addr.to_string(),
+        Err(_) => {
+            let host = host.to_ascii_lowercase();
+            host.strip_suffix('.').map_or(host.clone(), str::to_string)
+        }
+    }
 }
 
 /// Whether the host is this machine, where a plaintext key never leaves it.
@@ -301,11 +309,22 @@ mod tests {
     fn normalizes_and_detects_loopback() {
         assert_eq!(normalize_host("[::1]"), "::1");
         assert_eq!(normalize_host("LocalHost"), "localhost");
+        assert_eq!(normalize_host("0:0::1"), "::1");
+        assert_eq!(normalize_host("[2001:DB8:0::1]"), "2001:db8::1");
+        assert_eq!(normalize_host("Ts-Prod-1."), "ts-prod-1");
+        assert!(is_loopback("0:0::1"));
         for local in ["localhost", "127.0.0.1", "::1", "[::1]", "LOCALHOST"] {
             assert!(is_loopback(local), "{local}");
         }
         assert!(!is_loopback("ts"));
         assert!(!is_loopback("127.0.0.2"));
+    }
+
+    #[test]
+    fn a_trailing_dot_is_the_same_host() {
+        assert_eq!(ok("ts-prod-1.:9000"), tuple("http", "ts-prod-1", 9000));
+        assert_eq!(ok("http://ts."), tuple("http", "ts", 8108));
+        assert!(parse(".").is_err());
     }
 
     fn list(entries: &[&str]) -> AllowList {

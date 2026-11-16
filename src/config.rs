@@ -39,24 +39,45 @@ struct FileConfig {
 
 const NO_INLINE_SECRETS: &str = "secrets are not accepted inline: use typesense_api_key_file or typesense_api_key_env (api_key_file or api_key_env in a cluster)";
 
+/// An error message that never repeats a configured value: serde quotes the
+/// value it rejects (`string "..."`, ``unknown variant `...` ``), which could
+/// be a secret in the wrong field.
+fn redact(message: &str) -> String {
+    let mut out = String::new();
+    let mut rest = message;
+    while let Some(i) = rest.find("string \"") {
+        out.push_str(&rest[..i]);
+        out.push_str("a string");
+        let quoted = &rest[i + "string \"".len()..];
+        let mut escaped = false;
+        let end = quoted
+            .char_indices()
+            .find(|&(_, c)| {
+                let done = c == '"' && !escaped;
+                escaped = c == '\\' && !escaped;
+                done
+            })
+            .map_or(quoted.len(), |(n, _)| n + 1);
+        rest = &quoted[end..];
+    }
+    out.push_str(rest);
+    match out.split_once("unknown variant `") {
+        Some((head, tail)) => match tail.split_once('`') {
+            Some((_, tail)) => format!("{head}unknown variant{tail}"),
+            None => format!("{head}unknown variant"),
+        },
+        None => out,
+    }
+}
+
 fn parse(text: &str, path: &Path) -> Result<FileConfig, String> {
     toml::from_str(text).map_err(|e| {
         // Not `Display`: it quotes the offending source line, which could be
-        // a secret. Name the line and its key instead.
-        let message = e.message();
-        let (line, key) = match e.span() {
-            Some(span) => {
-                let n = text[..span.start].matches('\n').count();
-                let key = text[..span.start]
-                    .rsplit('\n')
-                    .next()
-                    .and_then(|l| l.split_once('='))
-                    .map(|(k, _)| format!(" (key {})", k.trim()))
-                    .unwrap_or_default();
-                (format!(" at line {}", n + 1), key)
-            }
-            None => Default::default(),
-        };
+        // a secret. Name the file and line instead.
+        let message = redact(e.message());
+        let line = e.span().map_or_else(String::new, |span| {
+            format!(" at line {}", text[..span.start].matches('\n').count() + 1)
+        });
         let hint = if message.contains("unknown field `api_key`")
             || message.contains("unknown field `typesense_api_key`")
         {
@@ -65,32 +86,98 @@ fn parse(text: &str, path: &Path) -> Result<FileConfig, String> {
             String::new()
         };
         format!(
-            "invalid config file {}{line}{key}: {message}{hint}",
+            "invalid config file {}{line}: {message}{hint}",
             path.display()
         )
     })
 }
 
+/// A valid environment variable name, so a mistakenly pasted key in a
+/// `*_env` setting is never echoed back in an error.
+fn is_env_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    name.len() <= 128
+        && chars
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Read an API key from the environment variable a `*_env` setting names.
+/// `at` says where the setting is; errors never contain the key, and the
+/// setting's value is only echoed when it is a valid variable name.
+pub(crate) fn key_from_env(
+    var: &str,
+    setting: &str,
+    at: &str,
+    env: impl Fn(&str) -> Option<String>,
+) -> Result<String, String> {
+    if !is_env_name(var) {
+        return Err(format!(
+            "{at}: {setting} must be an environment variable name"
+        ));
+    }
+    match env(var).map(|v| v.trim().to_string()) {
+        Some(v) if !v.is_empty() => Ok(v),
+        _ => Err(format!(
+            "{at}: environment variable {var} ({setting}) is not set or is empty"
+        )),
+    }
+}
+
+fn blank(s: &str) -> bool {
+    s.trim().is_empty()
+}
+
+/// Accept only `http` or `https` (any case) and store it in lowercase. An
+/// empty value (`TYPESENSE_PROTOCOL=`) means the default.
+fn check_protocol(args: &mut CliArgs) -> Result<(), String> {
+    let p = args.typesense_protocol.trim().to_ascii_lowercase();
+    args.typesense_protocol = match p.as_str() {
+        "" => "http".to_string(),
+        "http" | "https" => p,
+        _ => return Err("typesense_protocol must be http or https".to_string()),
+    };
+    Ok(())
+}
+
 /// Fill in `args` from the `--config` file, for every option the flags and
 /// environment left at its default. `env` looks up `*_env` variables.
+/// Also checks what no source can: the protocol, and empty values.
 pub fn merge(
     args: &mut CliArgs,
     matches: &ArgMatches,
     env: impl Fn(&str) -> Option<String>,
 ) -> Result<(), String> {
+    // `TYPESENSE_HOST=` (a compose `${VAR:-}`) is not a host or a key.
+    if args.typesense_host.as_deref().is_some_and(blank) {
+        args.typesense_host = None;
+    }
+    if args.typesense_api_key.as_deref().is_some_and(blank) {
+        args.typesense_api_key = None;
+    }
+    if args
+        .typesense_api_key_file
+        .as_deref()
+        .is_some_and(|p| p.as_os_str().is_empty())
+    {
+        args.typesense_api_key_file = None;
+    }
     let Some(path) = args.config.clone() else {
-        return Ok(());
+        return check_protocol(args);
     };
     let text = std::fs::read_to_string(&path)
         .map_err(|e| format!("cannot read config file {}: {e}", path.display()))?;
     let file = parse(&text, &path)?;
     let at = format!("config file {}", path.display());
 
-    let unset = |id: &str| {
-        matches!(
-            matches.value_source(id),
-            None | Some(ValueSource::DefaultValue)
-        )
+    // An environment variable that is set but empty counts as unset.
+    let unset = |id: &str| match matches.value_source(id) {
+        None | Some(ValueSource::DefaultValue) => true,
+        Some(ValueSource::EnvVariable) => matches
+            .get_raw(id)
+            .is_some_and(|mut v| v.all(|s| blank(&s.to_string_lossy()))),
+        Some(_) => false,
     };
     macro_rules! take {
         ($field:ident) => {
@@ -124,10 +211,13 @@ pub fn merge(
             args.probe_max_concurrency = v;
         }
     }
+    check_protocol(args).map_err(|e| format!("{at}: {e}"))?;
+    if args.typesense_host.as_deref().is_some_and(blank) {
+        args.typesense_host = None;
+    }
 
     // A key from the flags or environment replaces the file's key settings.
-    let flag_key = args.typesense_api_key.is_some() || args.typesense_api_key_file.is_some();
-    if !flag_key {
+    if !args.has_key() {
         match (file.typesense_api_key_file, file.typesense_api_key_env) {
             (Some(_), Some(_)) => {
                 return Err(format!(
@@ -137,14 +227,10 @@ pub fn merge(
             (Some(key_file), None) => {
                 args.typesense_api_key_file = Some(relative_to(&path, key_file))
             }
-            (None, Some(var)) => match env(&var).map(|v| v.trim().to_string()) {
-                Some(v) if !v.is_empty() => args.typesense_api_key = Some(v),
-                _ => {
-                    return Err(format!(
-                        "{at}: environment variable {var} (typesense_api_key_env) is not set or is empty"
-                    ))
-                }
-            },
+            (None, Some(var)) => {
+                args.typesense_api_key =
+                    Some(key_from_env(&var, "typesense_api_key_env", &at, &env)?);
+            }
             (None, None) => {}
         }
     }
@@ -344,20 +430,95 @@ mod tests {
     }
 
     #[test]
-    fn invalid_values_name_the_file_and_the_key() {
-        for (toml, key) in [
-            ("typesense_port = \"abc\"", "typesense_port"),
-            ("typesense_port = 99999", "typesense_port"),
-            ("metric_names = \"v2\"", "metric_names"),
-            ("exporter_bind_port = -1", "exporter_bind_port"),
+    fn invalid_values_name_the_file_and_the_line() {
+        for toml in [
+            "typesense_port = \"abc\"",
+            "typesense_port = 99999",
+            "metric_names = \"v2\"",
+            "exporter_bind_port = -1",
+            "probe_allowed_targets = [\"a\",\n1]",
         ] {
             let e = load(&[], toml, &[]).unwrap_err();
-            assert!(e.contains("config file") && e.contains(key), "{toml}: {e}");
+            assert!(
+                e.contains("config file") && e.contains("at line"),
+                "{toml}: {e}"
+            );
         }
         let e = load(&[], "probe_max_concurrency = 0", &[]).unwrap_err();
         assert!(e.contains("probe_max_concurrency"), "{e}");
         let e = load(&[], "not toml [", &[]).unwrap_err();
         assert!(e.contains("invalid config file"), "{e}");
+    }
+
+    #[test]
+    fn errors_never_contain_the_values_they_reject() {
+        const S: &str = "SECRET-123";
+        let cases = [
+            format!("typesense_api_key_env = \"{S}\""),
+            format!("[clusters.p]\ntargets = [\"a\"]\napi_key_env = \"{S}\""),
+            format!("typesense_port = \"{S}\""),
+            format!("typesense_timeout = \"{S}\""),
+            format!("exporter_bind_port = \"{S}\""),
+            format!("probe_max_concurrency = \"{S}\""),
+            format!("metric_names = \"{S}\""),
+            format!("typesense_protocol = \"{S}\""),
+            format!("typesense_host = [\"{S}\"]"),
+            format!("probe_allowed_targets = \"{S}\""),
+            format!("[clusters.p]\ntargets = \"{S}\""),
+            format!("[clusters.p]\ntargets = [\"a\"]\napi_key_env = \"K\"\nprotocol = \"{S}\""),
+            format!("typesense_api_key_file = [\"{S}\"]"),
+        ];
+        for toml in &cases {
+            let e = load(&[], toml, &[("K", "k")]).unwrap_err();
+            assert!(!e.contains(S), "{toml}: {e}");
+        }
+        // A valid name that is unset is fine to name.
+        let e = load(&[], "typesense_api_key_env = \"MISSING_VAR\"", &[]).unwrap_err();
+        assert!(e.contains("MISSING_VAR"), "{e}");
+        let e = load(&[], "typesense_api_key_env = \"a b\"", &[]).unwrap_err();
+        assert!(e.contains("must be an environment variable name"), "{e}");
+    }
+
+    #[test]
+    fn the_protocol_is_validated_and_lowercased_from_every_source() {
+        for toml in ["typesense_protocol = \"ftp\"", "typesense_protocol = \"\""] {
+            let e = load(
+                &[],
+                &format!("{toml}\ntypesense_api_key_env = \"K\""),
+                &[("K", "k")],
+            );
+            assert!(toml.contains("ftp") == e.is_err(), "{toml}: {e:?}");
+        }
+        let toml =
+            "typesense_protocol = \"HTTPS\"\n[clusters.p]\ntargets = [\"a\"]\napi_key_env = \"K\"";
+        let a = load(&[], toml, &[("K", "k")]).unwrap();
+        assert_eq!(a.typesense_protocol, "https");
+        assert_eq!(a.clusters.clusters[0].protocol, "https");
+        assert!(!a.sends_key_in_plaintext());
+
+        let a = load(&["--typesense-protocol=HTTP"], "", &[]).unwrap();
+        assert_eq!(a.typesense_protocol, "http");
+        let e = load(&["--typesense-protocol=ftp"], "", &[]).unwrap_err();
+        assert!(e.contains("http or https") && !e.contains("ftp\""), "{e}");
+
+        // Without a config file, too.
+        let argv = ["exporter", "--typesense-protocol=gopher"];
+        let matches = CliArgs::command().try_get_matches_from(argv).unwrap();
+        let mut args = CliArgs::from_arg_matches(&matches).unwrap();
+        assert!(merge(&mut args, &matches, |_| None).is_err());
+    }
+
+    #[test]
+    fn the_example_file_loads_once_a_key_is_given() {
+        let example = include_str!("../deploy/exporter.example.toml");
+        let a = load(
+            &["--typesense-api-key=k", "--typesense-host=h"],
+            example,
+            &[],
+        )
+        .unwrap();
+        assert!(a.clusters.clusters.is_empty(), "clusters are commented out");
+        assert_eq!(a.typesense_port, 8108);
     }
 
     #[test]

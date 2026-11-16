@@ -50,8 +50,14 @@ struct AppState {
 /// Fails if a key can't be read, the probe config or an allowed target is
 /// invalid or overlaps another, or the HTTP client can't be built.
 pub fn router(args: &CliArgs) -> std::io::Result<Router> {
-    let has_key = args.typesense_api_key.is_some() || args.typesense_api_key_file.is_some();
-    let api_key = has_key.then(|| args.api_key()).transpose()?;
+    if args
+        .typesense_host
+        .as_deref()
+        .is_some_and(|h| h.trim().is_empty())
+    {
+        return Err(std::io::Error::other("--typesense-host must not be empty"));
+    }
+    let api_key = args.has_key().then(|| args.api_key()).transpose()?;
     // Never follow redirects: reqwest would resend the API key header to
     // wherever a node (or something impersonating it) redirects.
     let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());

@@ -1380,6 +1380,33 @@ fn router_rejects_a_node_that_has_two_keys() {
 }
 
 #[test]
+fn router_rejects_an_ipv6_host_spelled_differently_from_a_cluster_node() {
+    let config = probe_config(&[("prod", "k", "http", &["[::1]:8108".to_string()])]);
+    let mut host = config_only_args(config);
+    host.typesense_api_key = Some("default".into());
+    host.typesense_host = Some("0:0::1".into());
+    let err = server::router(&host).unwrap_err().to_string();
+    assert!(
+        err.contains("--typesense-host") && err.contains("prod"),
+        "{err}"
+    );
+}
+
+#[test]
+fn router_rejects_an_empty_host_and_ignores_an_empty_key() {
+    let mut args =
+        CliArgs::load_from(["exporter", "--typesense-host=ts", "--typesense-api-key=k"]).unwrap();
+    args.typesense_host = Some(String::new());
+    let err = server::router(&args).unwrap_err().to_string();
+    assert!(err.contains("--typesense-host must not be empty"), "{err}");
+
+    args.typesense_host = Some("ts".into());
+    args.typesense_api_key = Some(String::new());
+    let err = server::router(&args).unwrap_err().to_string();
+    assert!(err.contains("--typesense-api-key"), "{err}");
+}
+
+#[test]
 fn bad_config_files_are_reported_without_leaking_keys() {
     let err = load_config(std::path::Path::new("/nonexistent/probe.toml")).unwrap_err();
     assert!(err.contains("/nonexistent/probe.toml"), "{err}");

@@ -27,15 +27,16 @@
 # probe_allowed_targets = ["typesense-1", "typesense-2:8108"]
 # probe_max_concurrency = 16     # at least 1
 
-# Clusters with their own API key. /probe?target=<node> finds the cluster
+# Clusters with their own API key (uncomment to use). /probe?target=<node> finds the cluster
 # that lists the node and uses that cluster's key and protocol, so a key can
-# only reach its own nodes. A node may be listed in one cluster only, and not
+# only reach its own nodes. List nodes the way Prometheus targets them
+# (a different spelling, such as an IP address, matches no cluster). A node may be listed in one cluster only, and not
 # in probe_allowed_targets or typesense_host.
-[clusters.prod]
-targets = ["ts-prod-1:8108", "ts-prod-2:8108", "ts-prod-3:8108"]
-api_key_file = "/run/secrets/typesense-prod"   # or api_key_env, exactly one
-protocol = "https"                             # optional; default typesense_protocol
+# [clusters.prod]
+# targets = ["ts-prod-1:8108", "ts-prod-2:8108", "ts-prod-3:8108"]
+# api_key_file = "/run/secrets/typesense-prod"   # or api_key_env, exactly one
+# protocol = "https"                             # optional; default typesense_protocol
 
-[clusters.staging]
-targets = ["ts-staging-1:8108"]
-api_key_env = "TYPESENSE_STAGING_KEY"
+# [clusters.staging]
+# targets = ["ts-staging-1:8108"]
+# api_key_env = "TYPESENSE_STAGING_KEY"

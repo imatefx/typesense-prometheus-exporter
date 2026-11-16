@@ -138,10 +138,21 @@ impl CliArgs {
     /// `--typesense-api-key-file`.
     pub fn api_key(&self) -> std::io::Result<String> {
         match (&self.typesense_api_key, &self.typesense_api_key_file) {
-            (Some(key), _) => Ok(key.clone()),
-            (None, Some(path)) => read_key_file(path),
-            (None, None) => Err(std::io::Error::other("no Typesense API key configured")),
+            (Some(key), _) if !key.trim().is_empty() => Ok(key.clone()),
+            (_, Some(path)) if !path.as_os_str().is_empty() => read_key_file(path),
+            _ => Err(std::io::Error::other("no Typesense API key configured")),
         }
+    }
+
+    /// Whether a non-empty key or key file is configured.
+    pub fn has_key(&self) -> bool {
+        self.typesense_api_key
+            .as_deref()
+            .is_some_and(|k| !k.trim().is_empty())
+            || self
+                .typesense_api_key_file
+                .as_deref()
+                .is_some_and(|p| !p.as_os_str().is_empty())
     }
 
     /// Whether the API key would travel unencrypted to another machine
@@ -193,6 +204,7 @@ impl fmt::Debug for CliArgs {
             .field("typesense_timeout", &self.typesense_timeout)
             .field("metric_names", &self.metric_names)
             .field("probe_allowed_targets", &self.probe_allowed_targets)
+            .field("probe_max_concurrency", &self.probe_max_concurrency)
             .field("config", &self.config)
             .field("clusters", &self.clusters)
             .finish()

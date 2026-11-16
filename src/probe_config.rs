@@ -84,7 +84,7 @@ impl ProbeConfig {
                 Some(p) if p.eq_ignore_ascii_case("http") || p.eq_ignore_ascii_case("https") => {
                     Some(p.to_ascii_lowercase())
                 }
-                Some(p) => return Err(format!("{at}: protocol {p:?} must be http or https")),
+                Some(_) => return Err(format!("{at}: protocol must be http or https")),
             };
 
             if c.targets.is_empty() {
@@ -120,14 +120,7 @@ impl ProbeConfig {
                         format!("{at}: cannot read api_key_file {}: {e}", key_file.display())
                     })?
                 }
-                (None, Some(var)) => match env(&var).map(|v| v.trim().to_string()) {
-                    Some(v) if !v.is_empty() => v,
-                    _ => {
-                        return Err(format!(
-                            "{at}: environment variable {var} (api_key_env) is not set or is empty"
-                        ))
-                    }
-                },
+                (None, Some(var)) => crate::config::key_from_env(&var, "api_key_env", &at, &env)?,
             };
 
             clusters.push(Cluster {

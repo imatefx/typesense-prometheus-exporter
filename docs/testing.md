@@ -4,8 +4,8 @@ Three layers, from fast and isolated to slow and real:
 
 | Layer | Where | Runs against | Count | Time | Needs |
 |---|---|---|---|---|---|
-| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 84 | < 1s | Rust |
-| Integration | [`tests/exporter.rs`](../tests/exporter.rs), [`tests/config_env.rs`](../tests/config_env.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 51 | ~1s | Rust |
+| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 88 | < 1s | Rust |
+| Integration | [`tests/exporter.rs`](../tests/exporter.rs), [`tests/config_env.rs`](../tests/config_env.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 56 | ~1s | Rust |
 | End-to-end | [`tests/e2e.rs`](../tests/e2e.rs) | A real 3-node Typesense cluster, one exporter, Prometheus and Grafana in Docker | 9 | ~3–5 min | Rust, Docker |
 
 ```bash
@@ -16,6 +16,8 @@ make coverage           # unit + integration coverage, fails under 90% of lines
 make coverage-html      # HTML coverage report, opens in a browser
 make e2e                # starts the stack, runs the e2e tests, tears the stack down
 ```
+
+The config-file unit tests read the real process environment (through `CliArgs`, which reads `TYPESENSE_*`), so a developer with `TYPESENSE_*` variables exported may see failures; run them with those unset (`env -u TYPESENSE_HOST ...`). `tests/config_env.rs` sets and clears its own variables and serialises its tests.
 
 A plain `cargo test` runs unit and integration tests only. The e2e tests sit behind the `e2e` cargo feature, so they never need Docker by accident.
 
@@ -76,7 +78,8 @@ The 1.0 names ([design](metrics-v1.md)) and the `--metric-names` modes:
 | `base_url_brackets_ipv6` | The URL the exporter calls brackets IPv6 hosts |
 | `surrounding_whitespace_is_trimmed` | Whitespace around a target is ignored |
 | `rejects_bad_targets` | Empty, other schemes, paths, queries, fragments, credentials, bad or zero ports, unbracketed IPv6, bad characters |
-| `normalizes_and_detects_loopback` | Brackets and case are normalised; `localhost`, `127.0.0.1` and `::1` are loopback |
+| `a_trailing_dot_is_the_same_host` | `ts.` parses as `ts`; a bare `.` is invalid |
+| `normalizes_and_detects_loopback` | Brackets, case, a trailing dot and IPv6 spelling (`0:0::1` is `::1`) are normalised; `localhost`, `127.0.0.1` and `::1` are loopback |
 | `allow_list_matches_host_and_port_ignoring_scheme_and_case` | An entry allows its host and port in any scheme or case; a different port is refused |
 | `allow_list_wildcard_allows_everything` | `*` allows any target |
 | `empty_allow_list_allows_nothing_until_a_node_is_added` | Blank entries are skipped; the configured host can be added |
@@ -94,7 +97,10 @@ The 1.0 names ([design](metrics-v1.md)) and the `--metric-names` modes:
 | `a_flag_key_replaces_the_files_key_settings` | A key from a flag skips the file's key settings; `typesense_api_key_env` is read and trimmed |
 | `rejects_bad_key_settings_in_the_file` | Unset or empty `typesense_api_key_env`, and both key sources, are errors naming the setting |
 | `rejects_unknown_keys_and_inline_secrets_without_echoing_them` | A typo, an inline `typesense_api_key` or cluster `api_key`, and unknown tables are errors; the hint points to the file/env options; the secret never appears |
-| `invalid_values_name_the_file_and_the_key` | Wrong types, out-of-range numbers, bad `metric_names`, `probe_max_concurrency = 0` and invalid TOML name the file and key |
+| `invalid_values_name_the_file_and_the_line` | Wrong types, out-of-range numbers, bad `metric_names`, `probe_max_concurrency = 0` and invalid TOML name the file and line |
+| `errors_never_contain_the_values_they_reject` | A secret-looking string in every typed field, a `*_env` setting and a protocol never appears in the error; an invalid variable name is reported without echoing it |
+| `the_protocol_is_validated_and_lowercased_from_every_source` | `ftp` from file, flag or no config is an error; `HTTPS`/`HTTP` are stored lowercase and clusters inherit it |
+| `the_example_file_loads_once_a_key_is_given` | `deploy/exporter.example.toml` loads as-is (clusters commented out) |
 | `a_missing_config_file_is_an_error_and_no_file_changes_nothing` | A missing file names its path; without `--config` nothing changes |
 
 ### Clusters: `src/probe_config.rs`
@@ -207,6 +213,11 @@ The exporter runs with the default `--metric-names=v1` unless a test says otherw
 | `bad_config_files_are_reported_without_leaking_keys` | Missing file, inline `api_key`, unreadable key file | Errors name the file/cluster; the inline secret isn't echoed |
 | `the_exporter_starts_from_a_config_file_alone` | Host, port, key file and timeout all in the file, no flags | `/metrics` works |
 | `router_needs_the_default_key_for_a_host_or_allow_list` | Clusters plus `--typesense-host` or an allow list but no default key | `server::router` returns an error; clusters alone are fine |
+| `router_rejects_an_ipv6_host_spelled_differently_from_a_cluster_node` | `--typesense-host=0:0::1` and a cluster node `[::1]` | Startup error: one node, one key |
+| `router_rejects_an_empty_host_and_ignores_an_empty_key` | Empty `--typesense-host`; empty API key | `server::router` returns an error for each |
+| `empty_environment_variables_fall_back_to_the_file` (`tests/config_env.rs`) | Empty `TYPESENSE_HOST`, `TYPESENSE_PROBE_ALLOWED_TARGETS` and `TYPESENSE_API_KEY` | The file's host, list and key are used |
+| `an_environment_key_beats_the_files_key_settings` (`tests/config_env.rs`) | `TYPESENSE_API_KEY` with a file `typesense_api_key_file` or `_env` | The environment key is used |
+| `list_and_enum_options_follow_the_same_precedence` (`tests/config_env.rs`) | `TYPESENSE_PROBE_ALLOWED_TARGETS` and `TYPESENSE_METRIC_NAMES` against the file and flags | Flag > environment > file |
 | `flag_beats_environment_beats_file_beats_default` (`tests/config_env.rs`) | Real environment variables, flags and a file | Flag > environment > file > default; `--config` read from `TYPESENSE_EXPORTER_CONFIG` |
 
 **Checking that the tests catch bugs.** The suite was checked by breaking the code on purpose (re-measured for 1.0.0):

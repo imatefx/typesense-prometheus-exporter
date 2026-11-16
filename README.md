@@ -99,6 +99,7 @@ Then add the exporter(s) to Prometheus, and import the [dashboards](grafana/) an
 
 | Flag | Environment variable | Default |
 |---|---|---|
+| `--config` | `TYPESENSE_EXPORTER_CONFIG` | *(none)*: TOML file that can set every option below and define per-cluster API keys; see [configuration](docs/configuration.md#config-file) |
 | `--typesense-host` | `TYPESENSE_HOST` | *(required unless `--probe-allowed-targets` or config clusters are set)* |
 | `--typesense-api-key` / `--typesense-api-key-file` | `TYPESENSE_API_KEY` / `TYPESENSE_API_KEY_FILE` | *(one is required)* |
 | `--typesense-port` | `TYPESENSE_PORT` | `8108` |
@@ -181,7 +182,7 @@ make up / down    # start / stop the Docker Compose stack
 ./build-cross.sh  # static linux/amd64 + linux/arm64 binaries
 ```
 
-There are 144 tests in three layers. **Unit** and **integration** tests run against a mock Typesense. **End-to-end** tests run against a real cluster and break it on purpose: leader failover, a hung node, quorum loss. See [testing](docs/testing.md) for the full list.
+There are 153 tests in three layers. **Unit** and **integration** tests run against a mock Typesense. **End-to-end** tests run against a real cluster and break it on purpose: leader failover, a hung node, quorum loss. See [testing](docs/testing.md) for the full list.
 
 ## Contributors
 
