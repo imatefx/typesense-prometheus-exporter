@@ -35,6 +35,9 @@ while ((SECONDS < end)); do
         cache=$([[ $((RANDOM % 2)) == 0 ]] && echo "&use_cache=true" || echo "")
         ts "$node/collections/$c/documents/search?q=${words[RANDOM % 14]}&query_by=title$cache" &
     done
+    # Single-document writes, so write latency stats are populated too.
+    ts -X POST "$TS/collections/products/documents?action=upsert" -H 'Content-Type: application/json' \
+        -d "{\"id\":\"w$((RANDOM % 500))\",\"title\":\"${words[RANDOM % 14]}\",\"n\":$RANDOM}" || true
     ((i % 10 == 0)) && ts -X DELETE "$TS/collections/products/documents?filter_by=n:<$((RANDOM * 50))" || true
     wait
     sleep 0.$((RANDOM % 5 + 3))

@@ -28,6 +28,12 @@
       "id": "timeseries",
       "name": "Time series",
       "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "bargauge",
+      "name": "Bargauge",
+      "version": ""
     }
   ],
   "annotations": {
@@ -157,7 +163,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "builder",
-          "expr": "typesense_stats_requests_per_second_by_collection{collection_name=\"$collection\"}",
+          "expr": "typesense_stats_requests_per_second_by_collection{host=~\"$host\",collection_name=~\"$collection\"}",
           "legendFormat": "{{host}} · {{method}} {{action}}",
           "range": true,
           "refId": "A"
@@ -250,7 +256,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "builder",
-          "expr": "typesense_stats_latency_ms_by_collection{collection_name=\"$collection\"}",
+          "expr": "typesense_stats_latency_ms_by_collection{host=~\"$host\",collection_name=~\"$collection\"}",
           "legendFormat": "{{host}} · {{method}} {{action}}",
           "range": true,
           "refId": "A"
@@ -258,6 +264,173 @@
       ],
       "title": "Latency",
       "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "id": 10,
+      "panels": [],
+      "title": "Documents",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "id": 11,
+      "type": "bargauge",
+      "title": "Documents per Collection",
+      "description": "Current document count of every collection (largest across the selected nodes).",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (collection) (typesense_collection_documents{host=~\"$host\"})",
+          "legendFormat": "{{collection}}",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 100,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 10
+      },
+      "id": 12,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "typesense_collection_documents{host=~\"$host\",collection=~\"$collection\"}",
+          "legendFormat": "{{host}} · {{collection}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Documents in $collection",
+      "type": "timeseries",
+      "description": "Document count of the selected collections over time, per node."
     }
   ],
   "refresh": "30s",
@@ -267,12 +440,43 @@
   "templating": {
     "list": [
       {
+        "name": "host",
+        "label": "Node",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "definition": "label_values(typesense_health, host)",
+        "query": {
+          "query": "label_values(typesense_health, host)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "sort": 1,
+        "hide": 0,
+        "skipUrlSync": false
+      },
+      {
         "current": {},
         "datasource": {
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
         },
-        "definition": "typesense_stats_latency_ms_by_collection",
+        "definition": "label_values(typesense_collection_documents, collection)",
         "hide": 0,
         "includeAll": true,
         "label": "Collection",
@@ -280,7 +484,7 @@
         "name": "collection",
         "options": [],
         "query": {
-          "query": "typesense_stats_latency_ms_by_collection",
+          "query": "label_values(typesense_collection_documents, collection)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 2,
