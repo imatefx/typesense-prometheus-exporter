@@ -1,0 +1,23 @@
+groups:
+  - name: typesense
+    rules:
+      - alert: TypesenseExporterDown
+        expr: up{job="typesense-exporter"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "Typesense exporter {{ $labels.instance }} is not being scraped"
+
+      - alert: TypesenseUnhealthy
+        expr: typesense_health == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "Typesense {{ $labels.host }}:{{ $labels.port }} is unhealthy or unreachable"
+
+      - alert: TypesenseNoLeader
+        expr: max(typesense_raft_state == bool 1) == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "No Typesense node reports itself as raft leader"

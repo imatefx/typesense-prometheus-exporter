@@ -1,0 +1,64 @@
+# Local monitoring stack: Typesense -> exporter -> Prometheus -> Grafana.
+#   docker compose up -d --build
+# Grafana: http://localhost:3000 (admin / ${GRAFANA_ADMIN_PASSWORD:-admin})
+# Prometheus: http://localhost:9090   Exporter: http://localhost:8888/metrics
+
+x-api-key: &api-key ${TYPESENSE_API_KEY:-local-dev-key}
+
+services:
+  typesense:
+    image: typesense/typesense:27.1
+    command: ["--data-dir=/data", "--api-key=${TYPESENSE_API_KEY:-local-dev-key}", "--enable-cors"]
+    ports: ["8108:8108"]
+    volumes: [typesense-data:/data]
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8108 && printf 'GET /health HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q '\"ok\":true' <&3"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  exporter:
+    build: .
+    image: typesense-prometheus-exporter:local
+    environment:
+      TYPESENSE_HOST: typesense
+      TYPESENSE_PORT: "8108"
+      TYPESENSE_API_KEY: *api-key
+      TYPESENSE_TIMEOUT: "5"
+    ports: ["8888:8888"]
+    depends_on:
+      typesense: { condition: service_healthy }
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--web.enable-lifecycle"]
+    ports: ["9090:9090"]
+    volumes:
+      - ./deploy/prometheus:/etc/prometheus:ro
+    depends_on: [exporter]
+
+  # Grafana provisioning does not resolve the ${DS_PROMETHEUS} import input in
+  # the shared dashboards, so copy them with the datasource uid filled in.
+  grafana-dashboards:
+    image: alpine:3.20
+    command: ["sh", "-c", "for f in /src/*.json; do sed 's/$${DS_PROMETHEUS}/prometheus/g' \"$$f\" > \"/out/$$(basename \"$$f\")\"; done"]
+    volumes:
+      - ./grafana:/src:ro
+      - grafana-dashboards:/out
+
+  grafana:
+    image: grafana/grafana:11.2.2
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_DEFAULT_THEME: dark
+    ports: ["3000:3000"]
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      prometheus: { condition: service_started }
+      grafana-dashboards: { condition: service_completed_successfully }
+
+volumes:
+  typesense-data:
+  grafana-dashboards:
