@@ -1,0 +1,88 @@
+# promtool test rules deploy/prometheus/legacy-names.test.yml
+rule_files:
+  - legacy-names.rules.yml
+
+evaluation_interval: 15s
+
+tests:
+  - interval: 15s
+    input_series:
+      - series: 'typesense_requests_per_second{host="ts",port="8108",operation="search"}'
+        values: '3.5'
+      - series: 'typesense_request_latency_avg_seconds{host="ts",port="8108",operation="search"}'
+        values: '0.0015'
+      - series: 'typesense_request_latency_seconds{host="ts",port="8108",operation="search",quantile="0.95"}'
+        values: '0.004'
+      - series: 'typesense_request_latency_seconds{host="ts",port="8108",operation="write",quantile="1"}'
+        values: '0.012'
+      - series: 'typesense_all_requests_per_second{host="ts",port="8108"}'
+        values: '3.6'
+      - series: 'typesense_cache_hit_ratio{host="ts",port="8108"}'
+        values: '0.25'
+      - series: 'typesense_route_latency_seconds{host="ts",port="8108",route="GET /health"}'
+        values: '0.0001'
+      - series: 'typesense_collection_requests_per_second{host="ts",port="8108",method="GET",collection="products",action="documents/search"}'
+        values: '3.4'
+      - series: 'typesense_system_cpu_active_ratio{host="ts",port="8108"}'
+        values: '0.0455'
+      - series: 'typesense_system_cpu_core_active_ratio{host="ts",port="8108",core="1"}'
+        values: '0.0909'
+      - series: 'typesense_process_memory_resident_bytes{host="ts",port="8108"}'
+        values: '29540352'
+      - series: 'typesense_system_network_received_bytes_total{host="ts",port="8108"}'
+        values: '1466'
+      - series: 'typesense_system_swap_used_bytes{host="ts",port="8108"}'
+        values: '0'
+    promql_expr_test:
+      - expr: typesense_stats{key="search_requests_per_second"}
+        exp_samples:
+          - labels: 'typesense_stats{host="ts",port="8108",key="search_requests_per_second"}'
+            value: 3.5
+      - expr: typesense_stats{key="search_latency_ms"}
+        exp_samples:
+          - labels: 'typesense_stats{host="ts",port="8108",key="search_latency_ms"}'
+            value: 1.5
+      - expr: typesense_stats{key="search_95Percentile_latency_ms"}
+        exp_samples:
+          - labels: 'typesense_stats{host="ts",port="8108",key="search_95Percentile_latency_ms"}'
+            value: 4
+      - expr: typesense_stats{key="write_max_latency_ms"}
+        exp_samples:
+          - labels: 'typesense_stats{host="ts",port="8108",key="write_max_latency_ms"}'
+            value: 12
+      - expr: typesense_stats{key="total_requests_per_second"}
+        exp_samples:
+          - labels: 'typesense_stats{host="ts",port="8108",key="total_requests_per_second"}'
+            value: 3.6
+      - expr: typesense_stats{key="cache_hit_ratio"}
+        exp_samples:
+          - labels: 'typesense_stats{host="ts",port="8108",key="cache_hit_ratio"}'
+            value: 0.25
+      - expr: typesense_stats_latency_ms
+        exp_samples:
+          - labels: 'typesense_stats_latency_ms{host="ts",port="8108",key="GET /health"}'
+            value: 0.1
+      - expr: typesense_stats_requests_per_second_by_collection
+        exp_samples:
+          - labels: 'typesense_stats_requests_per_second_by_collection{host="ts",port="8108",method="GET",collection_name="products",action="documents/search"}'
+            value: 3.4
+      - expr: typesense_metrics{key="system_cpu_active_percentage"}
+        exp_samples:
+          - labels: 'typesense_metrics{host="ts",port="8108",key="system_cpu_active_percentage"}'
+            value: 4.55
+      - expr: typesense_metrics{key="system_cpu1_active_percentage"}
+        exp_samples:
+          - labels: 'typesense_metrics{host="ts",port="8108",key="system_cpu1_active_percentage"}'
+            value: 9.09
+      - expr: typesense_metrics{key="typesense_memory_resident_bytes"}
+        exp_samples:
+          - labels: 'typesense_metrics{host="ts",port="8108",key="typesense_memory_resident_bytes"}'
+            value: 29540352
+      - expr: typesense_metrics{key="system_network_received_bytes"}
+        exp_samples:
+          - labels: 'typesense_metrics{host="ts",port="8108",key="system_network_received_bytes"}'
+            value: 1466
+      - expr: typesense_metrics{key="system_memory_used_swap_bytes"}
+        exp_samples:
+          - labels: 'typesense_metrics{host="ts",port="8108",key="system_memory_used_swap_bytes"}'
+            value: 0

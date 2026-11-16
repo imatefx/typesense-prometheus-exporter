@@ -139,103 +139,28 @@ If something you can't change still needs the 0.4 names (an external dashboard, 
 
 Load it **only while the exporters run with `v1`**. With `both` or `legacy` the exporters already emit these series, and the recorded copies would collide with them.
 
+The rules ship as [`deploy/prometheus/legacy-names.rules.yml`](../deploy/prometheus/legacy-names.rules.yml) (22 rules). CI checks them with `promtool` and runs the rule tests in [`legacy-names.test.yml`](../deploy/prometheus/legacy-names.test.yml). For example, the search p95 rule reads:
+
 ```yaml
-# Rebuilds the most common 0.4 Typesense series from the 1.0 names.
-# Load it only while the exporters run with TYPESENSE_METRIC_NAMES=v1:
-# with `both` or `legacy` the exporters already emit these series.
-groups:
-  - name: typesense-legacy-names
-    rules:
-      # /stats.json, per operation: typesense_stats{key="<op>_..."}
-      - record: typesense_stats
-        expr: |
-          max without (operation, quantile) (
-            label_replace(typesense_requests_per_second, "key", "${1}_requests_per_second", "operation", "(.+)")
-            or label_replace(typesense_request_latency_avg_seconds * 1000, "key", "${1}_latency_ms", "operation", "(.+)")
-            or label_replace(typesense_request_latency_seconds{quantile="0.7"} * 1000, "key", "${1}_70Percentile_latency_ms", "operation", "(.+)")
-            or label_replace(typesense_request_latency_seconds{quantile="0.95"} * 1000, "key", "${1}_95Percentile_latency_ms", "operation", "(.+)")
-            or label_replace(typesense_request_latency_seconds{quantile="0.99"} * 1000, "key", "${1}_99Percentile_latency_ms", "operation", "(.+)")
-            or label_replace(typesense_request_latency_seconds{quantile="0"} * 1000, "key", "${1}_min_latency_ms", "operation", "(.+)")
-            or label_replace(typesense_request_latency_seconds{quantile="1"} * 1000, "key", "${1}_max_latency_ms", "operation", "(.+)")
-          )
-      - record: typesense_stats
-        expr: typesense_all_requests_per_second
-        labels: {key: total_requests_per_second}
-      - record: typesense_stats
-        expr: typesense_overloaded_requests_per_second
-        labels: {key: overloaded_requests_per_second}
-      - record: typesense_stats
-        expr: typesense_pending_write_batches
-        labels: {key: pending_write_batches}
-      - record: typesense_stats
-        expr: typesense_cache_hits
-        labels: {key: cache_hit_count}
-      - record: typesense_stats
-        expr: typesense_cache_misses
-        labels: {key: cache_miss_count}
-      - record: typesense_stats
-        expr: typesense_cache_hit_ratio
-        labels: {key: cache_hit_ratio}
-
-      # /stats.json, per route and per collection
-      - record: typesense_stats_latency_ms
-        expr: max without (route) (label_replace(typesense_route_latency_seconds * 1000, "key", "$1", "route", "(.*)"))
-      - record: typesense_stats_requests_per_second
-        expr: max without (route) (label_replace(typesense_route_requests_per_second, "key", "$1", "route", "(.*)"))
-      - record: typesense_stats_latency_ms_by_collection
-        expr: max without (collection) (label_replace(typesense_collection_latency_seconds * 1000, "collection_name", "$1", "collection", "(.*)"))
-      - record: typesense_stats_requests_per_second_by_collection
-        expr: max without (collection) (label_replace(typesense_collection_requests_per_second, "collection_name", "$1", "collection", "(.*)"))
-
-      # /metrics.json: typesense_metrics{key="..."}
-      - record: typesense_metrics
-        expr: |
-          max without (core) (
-            label_replace(typesense_system_cpu_core_active_ratio * 100, "key", "system_cpu${1}_active_percentage", "core", "(.+)")
-            or label_replace(
-              {__name__=~"typesense_process_memory_(active|allocated|mapped|metadata|resident|retained)_bytes"},
-              "key", "typesense_memory_${1}_bytes", "__name__", "typesense_process_memory_(.+)_bytes"
-            )
-          )
-      - record: typesense_metrics
-        expr: typesense_system_cpu_active_ratio * 100
-        labels: {key: system_cpu_active_percentage}
-      - record: typesense_metrics
-        expr: typesense_system_memory_total_bytes
-        labels: {key: system_memory_total_bytes}
-      - record: typesense_metrics
-        expr: typesense_system_memory_used_bytes
-        labels: {key: system_memory_used_bytes}
-      - record: typesense_metrics
-        expr: typesense_system_swap_total_bytes
-        labels: {key: system_memory_total_swap_bytes}
-      - record: typesense_metrics
-        expr: typesense_system_swap_used_bytes
-        labels: {key: system_memory_used_swap_bytes}
-      - record: typesense_metrics
-        expr: typesense_system_disk_total_bytes
-        labels: {key: system_disk_total_bytes}
-      - record: typesense_metrics
-        expr: typesense_system_disk_used_bytes
-        labels: {key: system_disk_used_bytes}
-      - record: typesense_metrics
-        expr: typesense_system_network_received_bytes_total
-        labels: {key: system_network_received_bytes}
-      - record: typesense_metrics
-        expr: typesense_system_network_sent_bytes_total
-        labels: {key: system_network_sent_bytes}
-      - record: typesense_metrics
-        expr: typesense_process_memory_fragmentation_ratio
-        labels: {key: typesense_memory_fragmentation_ratio}
-
+- record: typesense_stats
+  expr: |
+    max without (operation, quantile) (
+      label_replace(typesense_request_latency_seconds{quantile="0.95"} * 1000, "key", "${1}_95Percentile_latency_ms", "operation", "(.+)")
+      or ...
+    )
 ```
 
-Save it as, for example, `typesense-legacy-names.yml`, add it to `rule_files` in `prometheus.yml`, and check it first:
+Copy the file next to your `prometheus.yml`, add it to `rule_files`, and check it first:
+
+```yaml
+rule_files:
+  - legacy-names.rules.yml
+```
 
 ```bash
-promtool check rules typesense-legacy-names.yml
+promtool check rules legacy-names.rules.yml
 # or, without a local Prometheus install:
-docker run --rm -v "$PWD":/r --entrypoint promtool prom/prometheus check rules /r/typesense-legacy-names.yml
+docker run --rm -v "$PWD":/r -w /r --entrypoint promtool prom/prometheus check rules legacy-names.rules.yml
 ```
 
 Notes:

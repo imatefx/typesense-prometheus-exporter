@@ -20,6 +20,17 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
 
+  rules:
+    name: Prometheus rules (promtool)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check the alert and recording rules, run the rule tests
+        run: |
+          promtool() { docker run --rm -v "$PWD/deploy/prometheus":/r -w /r --entrypoint promtool prom/prometheus:v2.54.1 "$@"; }
+          promtool check rules alerts.yml legacy-names.rules.yml
+          promtool test rules legacy-names.test.yml
+
   audit:
     name: security audit (cargo audit)
     runs-on: ubuntu-latest

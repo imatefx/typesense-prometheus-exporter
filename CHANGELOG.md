@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- [`deploy/prometheus/legacy-names.rules.yml`](deploy/prometheus/legacy-names.rules.yml): Prometheus recording rules that rebuild the 0.4 metric names from the 1.0 names, as a ready-to-load file (previously only inside the migration guide), with `promtool` rule tests.
+- CI job `rules`: `promtool check rules` on the alert and recording rules, and `promtool test rules` on the recording-rule tests.
+
+### Changed
+- Dashboard screenshots in the README show the 1.0 dashboards.
+- `docs/testing.md`: the bug-injection figures were re-measured on the 1.0.0 suite.
+
 ## [1.0.0] - 2026-11-16
 
 > **BREAKING: the metric names changed.** 1.0.0 exports the new metric names by default. Dashboards, alerts and queries that use `typesense_metrics{key=…}`, `typesense_stats{key=…}` or `typesense_stats_*` stop returning data after the upgrade. To keep them working, set `TYPESENSE_METRIC_NAMES=both` (old and new names together while you migrate) or `legacy` (old names only). See the [migration guide](https://github.com/imatefx/typesense-prometheus-exporter/blob/main/docs/migrating-to-1.0.md) for a before/after table of every query and ready-made recording rules.
