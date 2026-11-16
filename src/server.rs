@@ -50,6 +50,12 @@ pub async fn serve(listener: tokio::net::TcpListener, args: CliArgs) -> std::io:
             args.typesense_host
         );
     }
+    if args.metric_names.legacy() {
+        tracing::warn!(
+            "--metric-names={} exports the deprecated 0.4 metric names, which will be removed in 2.0.0; see docs/migrating-to-1.0.md",
+            if args.metric_names.v1() { "both" } else { "legacy" }
+        );
+    }
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())

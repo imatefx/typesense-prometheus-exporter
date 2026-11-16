@@ -6,9 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.5.0] - 2026-11-16
+## [1.0.0] - 2026-11-16
 
-> **BREAKING: the metric names changed.** 0.5.0 exports the new 1.0 names by default. Dashboards, alerts and queries that use `typesense_metrics{key=…}`, `typesense_stats{key=…}` or `typesense_stats_*` stop returning data after the upgrade. To keep them working, set `TYPESENSE_METRIC_NAMES=both` (old and new names together while you migrate) or `legacy` (old names only). See the [migration guide](https://github.com/imatefx/typesense-prometheus-exporter/blob/main/docs/migrating-to-1.0.md) for a before/after table of every query and ready-made recording rules.
+> **BREAKING: the metric names changed.** 1.0.0 exports the new metric names by default. Dashboards, alerts and queries that use `typesense_metrics{key=…}`, `typesense_stats{key=…}` or `typesense_stats_*` stop returning data after the upgrade. To keep them working, set `TYPESENSE_METRIC_NAMES=both` (old and new names together while you migrate) or `legacy` (old names only). See the [migration guide](https://github.com/imatefx/typesense-prometheus-exporter/blob/main/docs/migrating-to-1.0.md) for a before/after table of every query and ready-made recording rules.
 
 ### Added
 - **1.0 metric names** for everything from `/metrics.json` and `/stats.json`: one family per value, in base units, with the unit in the name. Latency is in seconds, CPU and cache shares are ratios from 0 to 1. See the [metrics reference](https://github.com/imatefx/typesense-prometheus-exporter/blob/main/docs/metrics.md) and the [design note](https://github.com/imatefx/typesense-prometheus-exporter/blob/main/docs/metrics-v1.md).
@@ -20,7 +20,7 @@ All notable changes to this project are documented here. The format follows
   - Cache: `typesense_cache_hits`, `typesense_cache_misses`, `typesense_cache_hit_ratio`.
   - Per route and per collection: `typesense_route_latency_seconds{route}`, `typesense_route_requests_per_second{route}`, `typesense_collection_latency_seconds{method,collection,action}`, `typesense_collection_requests_per_second{method,collection,action}`.
 - `typesense_unmapped{source,key}`: numeric Typesense fields the exporter has no name for yet, with their raw value. New Typesense fields still show up without an exporter release.
-- `--metric-names` / `TYPESENSE_METRIC_NAMES`: `v1` (default), `both` or `legacy`. `legacy` output is identical to 0.4.1. `legacy` and `both` will be removed in 1.0.0.
+- `--metric-names` / `TYPESENSE_METRIC_NAMES`: `v1` (default), `both` or `legacy`. `legacy` output is identical to 0.4.1. `legacy` and `both` are deprecated: the exporter logs a warning when they are used, and they will be removed in 2.0.0.
 - [Migration guide](https://github.com/imatefx/typesense-prometheus-exporter/blob/main/docs/migrating-to-1.0.md) with PromQL for every renamed family, Grafana unit tips, and recording rules that rebuild the 0.4 names in Prometheus.
 
 ### Changed
@@ -164,8 +164,8 @@ dashboards, a local stack and a full test suite. Metric names and labels from
 ### Added
 - First release: exports Typesense `/metrics.json` and `/stats.json` in Prometheus format.
 
-[Unreleased]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.5.0...HEAD
-[0.5.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.4.1...v0.5.0
+[Unreleased]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.4.1...v1.0.0
 [0.4.1]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.3.0...v0.3.1

@@ -1,6 +1,6 @@
 # Metrics reference
 
-This page describes the **1.0 metric names**, which the exporter emits by default since 0.5.0. The 0.4 names (`typesense_metrics{key=…}`, `typesense_stats{key=…}`, …) are still available behind [`--metric-names`](#choosing-the-names---metric-names) until 1.0.0; the [migration guide](migrating-to-1.0.md) maps every old name to its new one.
+This page describes the **1.0 metric names**, which the exporter emits by default since 1.0.0. The 0.4 names (`typesense_metrics{key=…}`, `typesense_stats{key=…}`, …) are still available behind [`--metric-names`](#choosing-the-names---metric-names) until 2.0.0; the [migration guide](migrating-to-1.0.md) maps every old name to its new one.
 
 Conventions:
 
@@ -201,4 +201,4 @@ count by (source, key) (typesense_unmapped)
 | `both` | The 1.0 names and the 0.4 names side by side, while you move queries over |
 | `legacy` | Only the 0.4 names, as 0.4.x exported them. No `typesense_unmapped`: unknown `/stats.json` fields appear as `typesense_stats{key=…}` as before. |
 
-`legacy` and `both` are removed in 1.0.0. The 0.4 families are `typesense_metrics{key}`, `typesense_stats{key}`, `typesense_stats_latency_ms{key}`, `typesense_stats_requests_per_second{key}`, `typesense_stats_latency_ms_by_collection{method,collection_name,action}` and `typesense_stats_requests_per_second_by_collection{method,collection_name,action}`. For the old name of every 1.0 metric, see the [migration guide](migrating-to-1.0.md#name-mapping). The reasoning behind the names is in the [design note](metrics-v1.md).
+`legacy` and `both` are deprecated and will be removed in 2.0.0. The 0.4 families are `typesense_metrics{key}`, `typesense_stats{key}`, `typesense_stats_latency_ms{key}`, `typesense_stats_requests_per_second{key}`, `typesense_stats_latency_ms_by_collection{method,collection_name,action}` and `typesense_stats_requests_per_second_by_collection{method,collection_name,action}`. For the old name of every 1.0 metric, see the [migration guide](migrating-to-1.0.md#name-mapping). The reasoning behind the names is in the [design note](metrics-v1.md).

@@ -32,7 +32,7 @@ x-exporter: &exporter
     TYPESENSE_PORT: "8108"
     TYPESENSE_API_KEY: ${TYPESENSE_API_KEY:-local-dev-key}
     TYPESENSE_TIMEOUT: "2"
-    # The default since 0.5.0, set explicitly so the dashboards and e2e tests
+    # The default since 1.0.0, set explicitly so the dashboards and e2e tests
     # prove nothing depends on the 0.4 names.
     TYPESENSE_METRIC_NAMES: v1
 

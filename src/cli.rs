@@ -74,6 +74,7 @@ pub struct CliArgs {
 
     /// Metric names to export: `v1` (the 1.0 names), `both` (1.0 and 0.4
     /// names, while moving queries over) or `legacy` (0.4 names only).
+    /// `both` and `legacy` are deprecated and will be removed in 2.0.0.
     #[arg(long, env = "TYPESENSE_METRIC_NAMES", value_enum, default_value_t = MetricNames::V1)]
     pub metric_names: MetricNames,
 }

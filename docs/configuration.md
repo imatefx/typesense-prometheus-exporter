@@ -20,7 +20,7 @@ Every option can be set as a command-line flag or as an environment variable. Th
 
 ## Metric names
 
-**0.5.0 renamed the metrics from `/metrics.json` and `/stats.json`** (units in the name, base units, one family per value). `--metric-names` / `TYPESENSE_METRIC_NAMES` picks which names are exported:
+**1.0.0 renamed the metrics from `/metrics.json` and `/stats.json`** (units in the name, base units, one family per value). `--metric-names` / `TYPESENSE_METRIC_NAMES` picks which names are exported:
 
 | Value | Exports |
 |---|---|
@@ -30,7 +30,7 @@ Every option can be set as a command-line flag or as an environment variable. Th
 
 Any other value is rejected at startup. Health, raft, version, collection and scrape-health metrics are the same in every mode, so the bundled alert rules work with any value.
 
-**Upgrading from 0.4.x with the default breaks queries that use the old names.** Set `TYPESENSE_METRIC_NAMES=both` while you migrate. `legacy` and `both` are removed in 1.0.0. See [migrating to 1.0](migrating-to-1.0.md).
+**Upgrading from 0.4.x with the default breaks queries that use the old names.** Set `TYPESENSE_METRIC_NAMES=both` while you migrate. `legacy` and `both` are deprecated (the exporter logs a warning) and will be removed in 2.0.0. See [migrating to 1.0](migrating-to-1.0.md).
 
 ## Endpoints
 

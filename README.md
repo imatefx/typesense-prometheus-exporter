@@ -28,7 +28,7 @@
 </div>
 
 > [!IMPORTANT]
-> **Upgrading from 0.4.x? 0.5.0 renames the metrics.** The new 1.0 names are the default, so dashboards and queries built on `typesense_metrics{key=…}` or `typesense_stats{key=…}` need updating. Set `TYPESENSE_METRIC_NAMES=both` to keep the old names alongside the new ones while you migrate. See [migrating to 1.0](docs/migrating-to-1.0.md).
+> **Upgrading from 0.4.x? 1.0.0 renames the metrics.** The new 1.0 names are the default, so dashboards and queries built on `typesense_metrics{key=…}` or `typesense_stats{key=…}` need updating. Set `TYPESENSE_METRIC_NAMES=both` to keep the old names alongside the new ones while you migrate. See [migrating to 1.0](docs/migrating-to-1.0.md).
 
 ## Features
 
@@ -58,7 +58,7 @@ open http://localhost:3000        # Grafana: admin / admin
 docker run -d -p 8888:8888 \
   -e TYPESENSE_HOST=typesense-1.internal \
   -e TYPESENSE_API_KEY=<admin-api-key> \
-  imatefx/typesense-prometheus-exporter:v0.5.0
+  imatefx/typesense-prometheus-exporter:v1.0.0
 
 curl -s localhost:8888/metrics | grep -E '^typesense_(health|raft_state)'
 ```
@@ -99,7 +99,7 @@ See [configuration](docs/configuration.md) for API key permissions, timeouts, fa
 | `typesense_route_{latency_seconds,requests_per_second}{route=…}`, `typesense_collection_{latency_seconds,requests_per_second}{collection=…,action=…}` | Requests per second and latency per API route, and per collection and action |
 | `typesense_unmapped{source=…,key=…}` | Numeric Typesense fields the exporter has no name for yet (raw values) |
 
-See the [metrics reference](docs/metrics.md) for every family, with units and example PromQL. These are the 1.0 names, the default since 0.5.0; the 0.4 names map over as shown in the [migration guide](docs/migrating-to-1.0.md).
+See the [metrics reference](docs/metrics.md) for every family, with units and example PromQL. These are the 1.0 names, the default since 1.0.0; the 0.4 names map over as shown in the [migration guide](docs/migrating-to-1.0.md).
 
 ## Alerts
 

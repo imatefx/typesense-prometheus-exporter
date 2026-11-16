@@ -1,7 +1,7 @@
 # Migrating to the 1.0 metric names
 
 > [!WARNING]
-> **0.5.0 changes the default metric names.** Out of the box, 0.5.0 exports only the new 1.0 names. Dashboards, alerts and queries that use `typesense_metrics{key=…}`, `typesense_stats{key=…}` or the `typesense_stats_*` families **stop returning data as soon as you upgrade**, unless you keep the old names as shown below.
+> **1.0.0 changes the default metric names.** Out of the box, 1.0.0 exports only the new 1.0 names. Dashboards, alerts and queries that use `typesense_metrics{key=…}`, `typesense_stats{key=…}` or the `typesense_stats_*` families **stop returning data as soon as you upgrade**, unless you keep the old names as shown below.
 
 ## Keep the old names while you migrate
 
@@ -9,7 +9,7 @@ Set `--metric-names` (or `TYPESENSE_METRIC_NAMES`) on every exporter:
 
 | Value | Exports | Use it to |
 |---|---|---|
-| `v1` *(default in 0.5.0)* | 1.0 names only | Run on the new names |
+| `v1` *(default)* | 1.0 names only | Run on the new names |
 | `both` | 1.0 names **and** 0.4 names | Upgrade without breaking anything, then move queries over one by one |
 | `legacy` | 0.4 names only, exactly as 0.4.x | Put the migration off |
 
@@ -18,16 +18,16 @@ docker run -d -p 8888:8888 \
   -e TYPESENSE_HOST=typesense-1.internal \
   -e TYPESENSE_API_KEY=<admin-api-key> \
   -e TYPESENSE_METRIC_NAMES=both \
-  imatefx/typesense-prometheus-exporter:v0.5.0
+  imatefx/typesense-prometheus-exporter:v1.0.0
 ```
 
 Families that don't come from `/metrics.json` or `/stats.json` keep their names and appear once in every mode: `typesense_health`, `typesense_raft_state`, `typesense_info`, `typesense_raft_committed_index`, `typesense_raft_queued_writes`, `typesense_collection_documents`, `typesense_scrape_success` and `typesense_scrape_duration_seconds`. **The bundled alert rules use only these, so they keep working in every mode.**
 
-`both` roughly doubles the series from those two endpoints for the migration window. `legacy` and `both` are removed in 1.0.0; `--metric-names=v1` is still accepted there and does nothing, so set it now if you like. After 1.0.0, the [recording rules](#recording-rules-for-the-old-names) below rebuild the old names inside Prometheus.
+`both` roughly doubles the series from those two endpoints for the migration window. `legacy` and `both` are deprecated: the exporter logs a warning while they are set, and they will be removed in 2.0.0, where `--metric-names=v1` is still accepted and does nothing. After that, the [recording rules](#recording-rules-for-the-old-names) below rebuild the old names inside Prometheus.
 
 A suggested path:
 
-1. Upgrade to 0.5.0 with `TYPESENSE_METRIC_NAMES=both`.
+1. Upgrade to 1.0.0 with `TYPESENSE_METRIC_NAMES=both`.
 2. Rewrite dashboards and alerts with the table below. While both name sets are exported, you can compare old and new panels side by side.
 3. Switch to `v1` (or remove the setting). Load the recording rules if something you can't change still needs the old names.
 

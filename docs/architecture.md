@@ -71,7 +71,7 @@ A fresh registry on every scrape means a metric that disappears from Typesense a
 
 **Export every numeric stat.** `/stats.json` keeps gaining fields (latency percentiles and min/max, cache counters). The model captures all top-level fields and exports every numeric one, so new Typesense versions need no exporter change. With the 1.0 names, a field without a mapping is exported as `typesense_unmapped{source,key}` with its raw value until it gets a proper name.
 
-**Names carry the unit, in base units.** Since 0.5.0, each value has its own family with the unit as a suffix (`_seconds`, `_bytes`, `_ratio`, counters `_total`), operations and quantiles are labels, and network bytes are counters. Unit conversion happens at export time; the models keep Typesense's raw values. See the [design note](metrics-v1.md).
+**Names carry the unit, in base units.** Since 1.0.0, each value has its own family with the unit as a suffix (`_seconds`, `_bytes`, `_ratio`, counters `_total`), operations and quantiles are labels, and network bytes are counters. Unit conversion happens at export time; the models keep Typesense's raw values. See the [design note](metrics-v1.md).
 
 **Bounded labels.** Typesense's per-endpoint stats include document and other resource IDs in the path. Exported as-is, every document read by ID would create new series. Endpoints are normalised to `…/documents/:id` before export, and the by-collection metrics don't repeat the raw endpoint, so the number of series depends on collections and routes, not on data.
 

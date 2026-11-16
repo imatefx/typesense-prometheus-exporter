@@ -1,6 +1,6 @@
 # Metric naming for 1.0 (design)
 
-Status: **implemented in 0.5.0**. 0.5.0 exports these names by default; see the [migration guide](migrating-to-1.0.md) to move dashboards and queries over, and the [metrics reference](metrics.md) for the current list.
+Status: **implemented in 1.0.0**. 1.0.0 exports these names by default; see the [migration guide](migrating-to-1.0.md) to move dashboards and queries over, and the [metrics reference](metrics.md) for the current list.
 
 ## Why rename
 
@@ -114,11 +114,11 @@ The four alert rules use only these, so they need no change.
 
 | Release | Old names (0.4) | New names (1.0) | Default |
 |---|---|---|---|
-| **0.5.0** | opt-in (`legacy` or `both`) | emitted | `v1` |
-| **1.0.0** | removed | emitted | — |
+| **1.0.0** | opt-in (`legacy` or `both`), deprecated | emitted | `v1` |
+| **2.0.0** | removed | emitted | — |
 
-- **0.5.0** adds `--metric-names` / `TYPESENSE_METRIC_NAMES` with the values `v1` (default), `both` or `legacy`. The default is the new names only, so **upgrading to 0.5.0 breaks dashboards and queries that use the old names** unless you set `both` (old and new together while you move queries over) or `legacy` (old names only, to put the migration off). The release notes and the migration guide lead with this.
-- The bundled Grafana dashboards switch to the new names in 0.5.0. The `docker-compose.yml` stack runs with `v1`, so the e2e tests prove the dashboards don't depend on old names.
+- **1.0.0** adds `--metric-names` / `TYPESENSE_METRIC_NAMES` with the values `v1` (default), `both` or `legacy`. The default is the new names only, so **upgrading to 1.0.0 breaks dashboards and queries that use the old names** unless you set `both` (old and new together while you move queries over) or `legacy` (old names only, to put the migration off). The release notes and the migration guide lead with this.
+- The bundled Grafana dashboards switch to the new names in 1.0.0. The `docker-compose.yml` stack runs with `v1`, so the e2e tests prove the dashboards don't depend on old names.
 - A [migration guide](migrating-to-1.0.md) gives a before/after PromQL table for every family. Examples:
 
   | 0.4 query | 1.0 query |
@@ -128,7 +128,8 @@ The four alert rules use only these, so they need no change.
   | `typesense_metrics{key="system_cpu_active_percentage"}` | `typesense_system_cpu_active_ratio * 100` |
   | `typesense_stats_requests_per_second_by_collection{collection_name="products"}` | `typesense_collection_requests_per_second{collection="products"}` |
 
-- **1.0.0** removes the old names and the `legacy` and `both` values. `--metric-names=v1` is still accepted and does nothing, so 0.5 configurations that set it keep starting.
+- `legacy` and `both` are deprecated in 1.0.0: the exporter logs a warning at startup while either is set.
+- **2.0.0** removes the old names and the `legacy` and `both` values. Semantic versioning doesn't allow removing them in a 1.x release. `--metric-names=v1` is still accepted and does nothing, so 1.x configurations that set it keep starting.
 - Anyone who needs old names after 1.0 can rebuild them with Prometheus recording rules. The [migration guide](migrating-to-1.0.md#recording-rules-for-the-old-names) includes a ready-made rules file.
 
 ## Several Typesense nodes from one exporter
