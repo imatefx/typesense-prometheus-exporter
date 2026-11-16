@@ -14,13 +14,15 @@
 [![Image size](https://img.shields.io/docker/image-size/imatefx/typesense-prometheus-exporter/latest)](https://hub.docker.com/r/imatefx/typesense-prometheus-exporter/tags)
 [![Platforms](https://img.shields.io/badge/platforms-linux%2Famd64%20%7C%20linux%2Farm64-blue)](https://hub.docker.com/r/imatefx/typesense-prometheus-exporter/tags)
 [![Typesense](https://img.shields.io/badge/tested%20with-Typesense%2030.1-e5446d)](https://typesense.org)
+[![Docs](https://img.shields.io/badge/docs-stalin--pereira.com-0b7285)](https://stalin-pereira.com/typesense-prometheus-exporter/)
 
-[Getting started](docs/getting-started.md) ·
-[Configuration](docs/configuration.md) ·
-[Metrics](docs/metrics.md) ·
-[Migrating to 1.0](docs/migrating-to-1.0.md) ·
-[Architecture](docs/architecture.md) ·
-[Testing](docs/testing.md) ·
+**[Documentation](https://stalin-pereira.com/typesense-prometheus-exporter/)** ·
+[Getting started](https://stalin-pereira.com/typesense-prometheus-exporter/getting-started/) ·
+[Configuration](https://stalin-pereira.com/typesense-prometheus-exporter/configuration/) ·
+[Metrics](https://stalin-pereira.com/typesense-prometheus-exporter/metrics/) ·
+[Kubernetes](https://stalin-pereira.com/typesense-prometheus-exporter/kubernetes/) ·
+[Migrating to 1.0](https://stalin-pereira.com/typesense-prometheus-exporter/migrating-to-1-0/) ·
+[Architecture](https://stalin-pereira.com/typesense-prometheus-exporter/architecture/) ·
 [Changelog](CHANGELOG.md)
 
 <img src="screenshots/Typesense-Cluster-Overview.png" alt="Typesense Cluster Overview dashboard: health, leader, versions, replication lag and traffic for a 3-node cluster" width="900">
