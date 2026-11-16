@@ -81,6 +81,8 @@ typesense-prometheus-exporter [OPTIONS] --typesense-host <TYPESENSE_HOST> --type
 - `-h, --help`: Display help.
 - `-V, --version`: Display version.
 
-## Todo
-- Add logging
-- Code cleanup
+## Behaviour notes
+
+- `typesense_health` (1 = healthy) and `typesense_raft_state` (1 = leader, 4 = follower, 0 = other/unreachable) are always exported, so you can alert on an unhealthy node or a cluster with no leader.
+- If a Typesense endpoint is unreachable, times out, or rejects the API key, its metrics are omitted for that scrape instead of being reported as zeros. Set `--typesense-timeout` so a hung node doesn't stall the scrape.
+- Logs go to stderr via `tracing`.

@@ -1,18 +1,7 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Response of Typesense's `/health` endpoint, e.g. `{"ok": true}`.
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct TypesenseHealth {
     pub ok: bool,
-    #[serde(default)]
-    pub resource_error: Option<String>,
 }
-
-impl Default for TypesenseHealth {
-    fn default() -> TypesenseHealth {
-        TypesenseHealth {
-            ok: false,
-            resource_error: None,
-        }
-    }
-}
-

@@ -1,11 +1,13 @@
 use clap::Parser;
-pub mod cli;
-pub mod prometheus_exp;
-pub mod server;
-pub mod typesense;
+
+mod cli;
+mod prometheus_exp;
+mod server;
+mod typesense;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> std::io::Result<()> {
+    tracing_subscriber::fmt::init();
     let args = cli::CliArgs::parse();
-    server::start_metrics_server(args).await;
+    server::start_metrics_server(args).await
 }
