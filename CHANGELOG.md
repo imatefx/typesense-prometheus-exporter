@@ -6,7 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-16
+
+### Added
+- Dependabot: weekly grouped updates for Rust crates, GitHub Actions and the Docker base image. Security alerts and automatic security fixes are enabled.
+
 ### Changed
+- Every GitHub Action is pinned to a commit SHA, with its version as a comment for Dependabot.
 - CI builds arm64 natively on GitHub's ARM runners (`ubuntu-24.04-arm`), for both the Docker image and the Linux arm64 release binary. QEMU emulation and the cross toolchain are no longer used. Each architecture's image builds in parallel and is merged into one multi-arch manifest.
 
 ## [0.4.0] - 2026-11-16
@@ -134,7 +140,8 @@ dashboards, a local stack and a full test suite. Metric names and labels from
 ### Added
 - First release: exports Typesense `/metrics.json` and `/stats.json` in Prometheus format.
 
-[Unreleased]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.2.0...v0.3.0
