@@ -8,9 +8,11 @@
 use std::{
     fmt,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant, SystemTime},
 };
+
+use crate::exporter_metrics::{ExporterMetrics, ReloadObserver};
 
 /// How often a key file's metadata is looked at, at most.
 const CHECK_INTERVAL: Duration = Duration::from_secs(1);
@@ -44,6 +46,8 @@ struct FileKey {
     path: PathBuf,
     interval: Duration,
     state: Mutex<FileState>,
+    /// Set once by `observe_reloads`.
+    observer: OnceLock<ReloadObserver>,
 }
 
 struct FileState {
@@ -84,8 +88,17 @@ impl KeySource {
                     checking: false,
                     warned: None,
                 }),
+                observer: OnceLock::new(),
             })),
         })
+    }
+
+    /// Count this key's file reloads in `metrics` as `name`. Does nothing for
+    /// a key that never changes.
+    pub fn observe_reloads(&self, name: &str, metrics: &ExporterMetrics) {
+        if let Inner::File(file) = &*self.inner {
+            let _ = file.observer.set(metrics.reload_observer(name));
+        }
     }
 
     /// The current key. For a file, this first re-reads it if its metadata
@@ -120,6 +133,9 @@ impl FileKey {
             Some(Ok(key)) => {
                 state.signature = now;
                 state.warned = None;
+                if let Some(observer) = self.observer.get() {
+                    observer.reloaded();
+                }
                 if key != state.key {
                     state.key = key;
                     tracing::info!(
@@ -129,6 +145,9 @@ impl FileKey {
                 }
             }
             Some(Err(err)) => {
+                if let Some(observer) = self.observer.get() {
+                    observer.failed();
+                }
                 let message = err.to_string();
                 if state.warned.as_ref() != Some(&message) {
                     tracing::warn!(
@@ -378,5 +397,37 @@ mod tests {
         assert!(KeySource::file(&d.join("missing")).is_err());
         std::fs::write(d.join("empty"), "\n").unwrap();
         assert!(KeySource::file(&d.join("empty")).is_err());
+    }
+
+    #[test]
+    fn reloads_are_counted_and_a_failure_is_flagged_until_the_next_good_read() {
+        let d = dir("observed");
+        let f = d.join("key");
+        std::fs::write(&f, "old\n").unwrap();
+        let m = ExporterMetrics::new();
+        let s = KeySource::file_with_interval(&f, Duration::ZERO).unwrap();
+        s.observe_reloads("default", &m);
+        let failing = |m: &ExporterMetrics| {
+            m.render()
+                .contains("typesense_exporter_key_reload_failing{key=\"default\"} 1")
+        };
+        assert!(!failing(&m));
+        std::fs::write(&f, "").unwrap();
+        s.current();
+        assert!(failing(&m));
+        assert_eq!(s.current(), "old");
+        std::fs::write(&f, "newer-key\n").unwrap();
+        s.current();
+        assert!(!failing(&m));
+        let text = m.render();
+        assert!(text.contains("key_reloads_total{key=\"default\",result=\"ok\"} 1"));
+        assert!(text.contains("key_reloads_total{key=\"default\",result=\"failed\"} 2"));
+    }
+
+    #[test]
+    fn a_fixed_key_has_nothing_to_observe() {
+        let m = ExporterMetrics::new();
+        KeySource::fixed("k".into()).observe_reloads("default", &m);
+        assert!(!m.render().contains("key_reload"));
     }
 }

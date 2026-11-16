@@ -34,3 +34,36 @@ groups:
         labels: { severity: warning }
         annotations:
           summary: "Exporter can't read {{ $labels.endpoint }} from Typesense {{ $labels.host }}:{{ $labels.port }}"
+
+  # Health of the exporter itself, from its /exporter/metrics endpoint (scrape
+  # job typesense-exporter-self in prometheus.yml).
+  - name: typesense-exporter
+    rules:
+      # The exporter keeps using the previous key, so scrapes work until the
+      # old key is revoked, and then every one of them fails.
+      - alert: TypesenseExporterKeyReloadFailing
+        expr: max by (instance, key) (typesense_exporter_key_reload_failing) == 1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Exporter {{ $labels.instance }} can't read the rotated API key file for {{ $labels.key }}"
+          description: "The latest reload of the {{ $labels.key }} key file failed, so the exporter is still using the previous key. Fix the file (the exporter log says why) before the old key is revoked."
+
+      # for: 0m on purpose. increase() over 10m keeps the alert firing for 10m
+      # after the last refusal, and a single refused target is already worth a
+      # look, so there is nothing to wait for; `for: 5m` would only delay it.
+      - alert: TypesenseExporterProbeRefused
+        expr: sum by (instance) (increase(typesense_exporter_scrapes_total{handler="probe",result=~"refused|invalid"}[10m])) > 0
+        for: 0m
+        labels: { severity: warning }
+        annotations:
+          summary: "Exporter {{ $labels.instance }} refused or rejected probes in the last 10m"
+          description: "Something is probing targets the exporter doesn't allow (403) or with a malformed target (400). Compare the Prometheus scrape config with --probe-allowed-targets and the config file's clusters, or find who else can reach the exporter."
+
+      - alert: TypesenseExporterProbesSaturated
+        expr: histogram_quantile(0.95, sum by (instance, le) (rate(typesense_exporter_probe_slot_wait_seconds_bucket[10m]))) > 1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Probes through exporter {{ $labels.instance }} wait over 1s for a slot (p95)"
+          description: "More probes arrive than --probe-max-concurrency allows at once, so scrapes queue and may time out. Raise --probe-max-concurrency."

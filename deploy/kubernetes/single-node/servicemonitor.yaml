@@ -15,3 +15,7 @@ spec:
       path: /metrics
       interval: 30s
       scrapeTimeout: 10s   # above TYPESENSE_TIMEOUT (5s)
+    # The exporter's own health: scrapes, Typesense request failures, key reloads.
+    - port: http
+      path: /exporter/metrics
+      interval: 30s

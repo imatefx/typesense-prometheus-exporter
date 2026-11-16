@@ -13,7 +13,7 @@
 [![Docker pulls](https://img.shields.io/docker/pulls/imatefx/typesense-prometheus-exporter)](https://hub.docker.com/r/imatefx/typesense-prometheus-exporter)
 [![Image size](https://img.shields.io/docker/image-size/imatefx/typesense-prometheus-exporter/latest)](https://hub.docker.com/r/imatefx/typesense-prometheus-exporter/tags)
 [![Platforms](https://img.shields.io/badge/platforms-linux%2Famd64%20%7C%20linux%2Farm64-blue)](https://hub.docker.com/r/imatefx/typesense-prometheus-exporter/tags)
-[![Typesense](https://img.shields.io/badge/tested%20with-Typesense%2030.1-e5446d)](https://typesense.org)
+[![Typesense](https://img.shields.io/badge/tested%20with-Typesense%2027.1%20%7C%2030.1-e5446d)](https://typesense.org)
 [![Docs](https://img.shields.io/badge/docs-stalin--pereira.com-0b7285)](https://stalin-pereira.com/typesense-prometheus-exporter/)
 
 **[Documentation](https://stalin-pereira.com/typesense-prometheus-exporter/)** ·
@@ -137,6 +137,8 @@ The exporter only probes the listed nodes, because it sends its API key to every
 
 **On Kubernetes**, [`deploy/kubernetes/`](deploy/kubernetes) has plain manifests (with a Prometheus Operator `ServiceMonitor` or `Probe`) for both setups, and a key file such as a mounted Secret is [reloaded without a restart](docs/configuration.md#rotating-keys).
 
+**The exporter's own health.** `GET /exporter/metrics` serves counters for scrapes (including refused `/probe` targets), Typesense request outcomes and durations, probe slot waits and API key reloads, apart from any node's output. Scrape it as its own job (`metrics_path: /exporter/metrics`, no `/probe`); see [exporter metrics](docs/metrics.md#exporter-metrics) and the job in [`deploy/prometheus/prometheus.yml`](deploy/prometheus/prometheus.yml).
+
 Then import the [dashboards](grafana/) and [alert rules](deploy/prometheus/alerts.yml). The [getting started guide](docs/getting-started.md) walks through it.
 
 ## Configuration
@@ -188,6 +190,11 @@ See the [metrics reference](docs/metrics.md) for every family, with units and ex
 | `TypesenseUnhealthy` | A node is unhealthy or unreachable for 1m |
 | `TypesenseNoLeader` | No node is raft leader for 1m. A normal election (a few seconds) doesn't trigger it. |
 | `TypesenseScrapeFailing` | A healthy node has an endpoint the exporter can't read for 5m (API key permissions, older Typesense) |
+| `TypesenseExporterKeyReloadFailing` | A rotated API key file can't be read for 5m; the exporter still uses the previous key |
+| `TypesenseExporterProbeRefused` | `/probe` refused or rejected a target in the last 10m: something probes nodes that aren't allowed |
+| `TypesenseExporterProbesSaturated` | Probes wait over 1s (p95) for a `--probe-max-concurrency` slot for 10m |
+
+The last three need the exporter's own metrics, from the `/exporter/metrics` scrape job.
 
 ## Dashboards
 
@@ -236,7 +243,7 @@ make up / down    # start / stop the Docker Compose stack
 ./build-cross.sh  # static linux/amd64 + linux/arm64 binaries
 ```
 
-There are 183 tests in three layers. **Unit** and **integration** tests run against a mock Typesense. **End-to-end** tests run against a real cluster and break it on purpose: leader failover, a hung node, quorum loss. See [testing](docs/testing.md) for the full list.
+There are 200 tests in three layers. **Unit** and **integration** tests run against a mock Typesense. **End-to-end** tests run against a real cluster and break it on purpose: leader failover, a hung node, quorum loss. They run against Typesense 30.1 and 27.1 (`TYPESENSE_VERSION=27.1 make e2e`). See [testing](docs/testing.md) for the full list.
 
 ## Contributors
 

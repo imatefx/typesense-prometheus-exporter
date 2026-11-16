@@ -15,6 +15,7 @@ use tokio::signal;
 
 use crate::{
     cli::{CliArgs, MetricNames},
+    exporter_metrics::{ExporterMetrics, Handler, RequestResult, ScrapeResult},
     key::KeySource,
     prometheus_exp::{self, Scrape},
     target::{is_loopback, normalize_host, AllowList, Target},
@@ -48,6 +49,8 @@ struct AppState {
     plaintext_warned: Mutex<HashSet<(String, u16)>>,
     /// Bounds concurrent /probe scrapes (`--probe-max-concurrency`).
     probe_slots: tokio::sync::Semaphore,
+    /// The exporter's own metrics, served at `/exporter/metrics`.
+    exporter: ExporterMetrics,
 }
 
 /// Build the exporter's HTTP router for the node(s) described by `args`.
@@ -137,6 +140,16 @@ pub fn router(args: &CliArgs) -> std::io::Result<Router> {
             }
         });
 
+    let exporter = ExporterMetrics::new();
+    if let Some(key) = &api_key {
+        key.observe_reloads("default", &exporter);
+    }
+    for cluster in &clusters.clusters {
+        cluster
+            .key_source()
+            .observe_reloads(&cluster.name, &exporter);
+    }
+
     let state = Arc::new(AppState {
         http,
         api_key,
@@ -149,12 +162,14 @@ pub fn router(args: &CliArgs) -> std::io::Result<Router> {
         timeout: args.typesense_timeout,
         plaintext_warned: Mutex::default(),
         probe_slots: tokio::sync::Semaphore::new(args.probe_max_concurrency as usize),
+        exporter,
     });
 
     Ok(Router::new()
         .route("/", get(root))
         .route("/metrics", get(metrics_handler))
         .route("/probe", get(probe_handler))
+        .route("/exporter/metrics", get(exporter_metrics_handler))
         .with_state(state))
 }
 
@@ -267,15 +282,14 @@ async fn shutdown_signal() {
 }
 
 async fn root() -> &'static str {
-    "Typesense Prometheus Exporter. Metrics are served at /metrics (the configured node) and /probe?target=host[:port] (any allowed node)\n"
+    "Typesense Prometheus Exporter. Metrics are served at /metrics (the configured node) and /probe?target=host[:port] (any allowed node); the exporter's own metrics are at /exporter/metrics\n"
 }
 
 /// `/metrics`: scrape the node set with `--typesense-host`.
 async fn metrics_handler(State(state): State<Arc<AppState>>) -> (StatusCode, String) {
     match &state.node {
-        Some(node) => (
-            StatusCode::OK,
-            scrape(
+        Some(node) => {
+            let body = scrape(
                 &TypesenseClient::new(
                     state.http.clone(),
                     node.base_url.clone(),
@@ -285,15 +299,31 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> (StatusCode, Str
                 node.port,
                 state.metric_names,
                 state.timeout,
+                &state.exporter,
             )
-            .await,
-        ),
-        None => (
-            StatusCode::NOT_FOUND,
-            "No --typesense-host is configured; scrape /probe?target=host[:port] instead\n"
-                .to_string(),
-        ),
+            .await;
+            state
+                .exporter
+                .record_scrape(Handler::Metrics, ScrapeResult::Ok);
+            (StatusCode::OK, body)
+        }
+        None => {
+            state
+                .exporter
+                .record_scrape(Handler::Metrics, ScrapeResult::NotFound);
+            (
+                StatusCode::NOT_FOUND,
+                "No --typesense-host is configured; scrape /probe?target=host[:port] instead\n"
+                    .to_string(),
+            )
+        }
     }
+}
+
+/// `/exporter/metrics`: the exporter's own health, never mixed into a node's
+/// output.
+async fn exporter_metrics_handler(State(state): State<Arc<AppState>>) -> String {
+    state.exporter.render()
 }
 
 #[derive(Deserialize)]
@@ -310,6 +340,9 @@ async fn probe_handler(
 ) -> (StatusCode, String) {
     let raw = params.target.unwrap_or_default();
     if raw.trim().is_empty() {
+        state
+            .exporter
+            .record_scrape(Handler::Probe, ScrapeResult::Invalid);
         return (
             StatusCode::BAD_REQUEST,
             "missing target parameter, e.g. /probe?target=host:8108\n".to_string(),
@@ -318,6 +351,9 @@ async fn probe_handler(
     let mut target = match Target::parse(&raw, &state.default_scheme, state.default_port) {
         Ok(target) => target,
         Err(reason) => {
+            state
+                .exporter
+                .record_scrape(Handler::Probe, ScrapeResult::Invalid);
             return (
                 StatusCode::BAD_REQUEST,
                 format!("invalid target: {reason}\n"),
@@ -345,6 +381,9 @@ async fn probe_handler(
                 target.host,
                 target.port
             );
+            state
+                .exporter
+                .record_scrape(Handler::Probe, ScrapeResult::Refused);
             return (
                 StatusCode::FORBIDDEN,
                 format!(
@@ -356,6 +395,9 @@ async fn probe_handler(
     };
 
     if target.scheme == "http" && protocol.eq_ignore_ascii_case("https") {
+        state
+            .exporter
+            .record_scrape(Handler::Probe, ScrapeResult::Refused);
         return (
             StatusCode::FORBIDDEN,
             "target scheme must be https, like the protocol of its cluster or --typesense-protocol; http would send the API key unencrypted\n"
@@ -380,24 +422,31 @@ async fn probe_handler(
         );
     }
 
+    let waiting = Instant::now();
     let Ok(_slot) = state.probe_slots.acquire().await else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             "exporter shutting down\n".to_string(),
         );
     };
+    state
+        .exporter
+        .observe_slot_wait(waiting.elapsed().as_secs_f64());
+    let _in_flight = state.exporter.probe_started();
     let client = TypesenseClient::new(state.http.clone(), target.base_url(), api_key.current());
-    (
-        StatusCode::OK,
-        scrape(
-            &client,
-            &target.host,
-            target.port,
-            state.metric_names,
-            state.timeout,
-        )
-        .await,
+    let body = scrape(
+        &client,
+        &target.host,
+        target.port,
+        state.metric_names,
+        state.timeout,
+        &state.exporter,
     )
+    .await;
+    state
+        .exporter
+        .record_scrape(Handler::Probe, ScrapeResult::Ok);
+    (StatusCode::OK, body)
 }
 
 /// Scrape one Typesense node and render metrics. Each endpoint is fetched
@@ -410,15 +459,16 @@ async fn scrape(
     port: u16,
     metric_names: MetricNames,
     timeout: u64,
+    exporter: &ExporterMetrics,
 ) -> String {
     let started = Instant::now();
     let (metrics, stats, health, debug, status, collections) = tokio::join!(
-        client.metrics(),
-        client.stats(),
-        client.health(),
-        client.debug(),
-        client.status(),
-        client.collections(),
+        timed(exporter, "/metrics.json", client.metrics()),
+        timed(exporter, "/stats.json", client.stats()),
+        timed(exporter, "/health", client.health()),
+        timed(exporter, "/debug", client.debug()),
+        timed(exporter, "/status", client.status()),
+        timed(exporter, "/collections", client.collections()),
     );
     let scrape_duration = started.elapsed().as_secs_f64();
 
@@ -457,6 +507,22 @@ async fn scrape(
     };
 
     prometheus_exp::generate_metrics(&scrape, host, port)
+}
+
+/// Run one Typesense request and record its outcome and duration.
+async fn timed<T>(
+    exporter: &ExporterMetrics,
+    endpoint: &'static str,
+    request: impl std::future::Future<Output = reqwest::Result<T>>,
+) -> reqwest::Result<T> {
+    let started = Instant::now();
+    let result = request.await;
+    exporter.observe_request(
+        endpoint,
+        RequestResult::of(&result),
+        started.elapsed().as_secs_f64(),
+    );
+    result
 }
 
 fn log_failure<T>(

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The exporter is a small HTTP service. Each time Prometheus scrapes `/metrics` (the node set with `--typesense-host`) or `/probe?target=<node>` (any allowed node), the exporter queries one Typesense node, turns the answers into Prometheus metrics, and returns them. It keeps nothing between scrapes except the current API key, which it re-reads when its file changes.
+The exporter is a small HTTP service. Each time Prometheus scrapes `/metrics` (the node set with `--typesense-host`) or `/probe?target=<node>` (any allowed node), the exporter queries one Typesense node, turns the answers into Prometheus metrics, and returns them. It keeps nothing about a node between scrapes except the current API key, which it re-reads when its file changes. Its own health (scrape outcomes, Typesense request outcomes, key reloads) is kept for the life of the process and served separately at `/exporter/metrics`.
 
 ```mermaid
 flowchart LR
@@ -52,7 +52,8 @@ A fresh registry on every scrape means a metric that disappears from Typesense a
 |---|---|
 | `src/main.rs` | Entry point: logging setup, parse CLI, `server::run` |
 | `src/cli.rs` | `CliArgs`: flags and environment variables (clap), including `MetricNames` (`v1`, `both`, `legacy`) |
-| `src/server.rs` | axum router (`/`, `/metrics`, `/probe`), the shared `scrape`, the one HTTP client, graceful shutdown |
+| `src/server.rs` | axum router (`/`, `/metrics`, `/probe`, `/exporter/metrics`), the shared `scrape`, the one HTTP client, graceful shutdown |
+| `src/exporter_metrics.rs` | `ExporterMetrics`: the one long-lived registry behind `/exporter/metrics`: scrape and Typesense request counters, request and slot-wait histograms, probes in flight, key reload counters. Every label comes from a fixed enum, the six Typesense paths or a cluster name |
 | `src/config.rs` | `--config`: the TOML file, its option names and the flag > environment > file > default merge |
 | `src/probe_config.rs` | `[clusters.<name>]`: validation, key loading and node-to-cluster lookup |
 | `src/target.rs` | `Target`: strict parsing of `/probe` targets (IPv6, default scheme and port, no paths or credentials); `AllowList`: the nodes `/probe` may contact |
@@ -88,6 +89,8 @@ A fresh registry on every scrape means a metric that disappears from Typesense a
 
 **Per-collection metrics from endpoint keys.** `/stats.json` reports latency and request rate keyed by endpoint, e.g. `GET /collections/products/documents/search`. A regex splits collection endpoints into `method`, `collection` and `action` labels (`collection_name` in the 0.4 names). The full route is exported separately as `typesense_route_*{route}`.
 
+**The exporter's own metrics are a separate endpoint.** `/exporter/metrics` renders a registry that lives as long as the process, so its counters accumulate across scrapes; a node's output is built from a fresh registry on every scrape and never contains it. That keeps `/metrics` and `/probe` output exactly what it was, and gives `/probe` the same exporter metrics as `/metrics` (as `blackbox_exporter`'s own `/metrics` does). The series carry no `host` or `port` and no value taken from a request: a refused or malformed `/probe` target is only counted, so a caller can't create series. Each of the six Typesense requests is timed in `server::timed`; the slot wait is timed around the `--probe-max-concurrency` semaphore; a file-backed `KeySource` is given a `ReloadObserver` at startup (`default`, or the cluster name) and reports each reload attempt from the same place that already warns about a failed reload.
+
 ## Docker Compose stack
 
 ```mermaid
@@ -97,7 +100,7 @@ flowchart TB
         T2 <-->|raft :8107| T3["typesense-3<br/>10.89.0.13"]
         T1 <-->|raft :8107| T3
         E[exporter] -->|"allowed targets"| T1 & T2 & T3
-        P[prometheus] -->|"/probe?target=typesense-N"| E
+        P[prometheus] -->|"/probe?target=typesense-N<br/>/exporter/metrics"| E
         G[grafana] --> P
         I["grafana-dashboards<br/>(init)"] -.->|"copies dashboards,<br/>fills in data source"| G
     end

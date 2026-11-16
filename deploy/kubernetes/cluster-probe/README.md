@@ -33,6 +33,15 @@ scrape_configs:
         replacement: typesense-exporter.typesense.svc:8888   # every scrape goes to the exporter
 ```
 
+Add a second job for the exporter's own health (probe refusals, Typesense request failures, key reload failures). It is a plain scrape of the Service, without `/probe` or relabeling, and the exporter alerts in [`alerts.yml`](../../prometheus/alerts.yml) need it:
+
+```yaml
+  - job_name: typesense-exporter-self
+    metrics_path: /exporter/metrics
+    static_configs:
+      - targets: [typesense-exporter.typesense.svc:8888]
+```
+
 If Prometheus discovers the nodes through Kubernetes service discovery instead, keep the same three relabel rules and make `__address__` match the `targets` in `configmap.yaml`.
 
 ## Using one key for a list of nodes

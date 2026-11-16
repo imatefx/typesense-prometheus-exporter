@@ -29,8 +29,24 @@ const GRAFANA: &str = "http://localhost:3000";
 const NODES: [u8; 3] = [1, 2, 3];
 const RAFT_LEADER: f64 = 1.0;
 const RAFT_FOLLOWER: f64 = 4.0;
-/// Must match the Typesense image in docker-compose.yml.
-const TYPESENSE_VERSION: &str = "30.1";
+/// The Typesense release the stack runs: `TYPESENSE_VERSION`, which
+/// docker-compose.yml also reads for its image tag. CI runs 30.1 and 27.1.
+fn typesense_version() -> String {
+    std::env::var("TYPESENSE_VERSION").unwrap_or_else(|_| "30.1".to_string())
+}
+
+/// Whether this Typesense reports the latency percentiles (p95, p99, max) and
+/// the cache hit ratio in `/stats.json`. 27.1 does not report them (checked
+/// against a live 27.1 node: only the plain averages and request rates), 30.1
+/// does. Releases from 28 on are assumed to; only 27.1 and 30.1 are tested.
+/// Every other check is the same for all versions.
+fn reports_percentiles_and_cache_stats() -> bool {
+    typesense_version()
+        .split('.')
+        .next()
+        .and_then(|major| major.parse::<u32>().ok())
+        .is_none_or(|major| major >= 28)
+}
 
 fn typesense_url(node: u8) -> String {
     format!("http://localhost:{}", 8107 + u16::from(node))
@@ -431,8 +447,10 @@ async fn cluster_has_one_leader_and_two_followers() {
         );
         assert!(
             samples.iter().any(|s| s.name == "typesense_info"
-                && s.labels.get("version").map(String::as_str) == Some(TYPESENSE_VERSION)),
-            "exporter-{node} reports Typesense {TYPESENSE_VERSION}"
+                && s.labels.get("version").map(String::as_str)
+                    == Some(typesense_version().as_str())),
+            "exporter-{node} reports Typesense {}",
+            typesense_version()
         );
         assert!(
             gauge(&samples, "typesense_raft_committed_index").is_some_and(|i| i > 0.0),
@@ -583,12 +601,19 @@ async fn traffic_is_reported_by_the_node_that_served_it() {
                 search(1, "e2e_products", q, false).await?;
             }
             let samples = scrape(1).await?;
-            for quantile in ["0.95", "0.99", "1"] {
+            // Older Typesense (27.1) has no percentiles; see
+            // reports_percentiles_and_cache_stats.
+            let quantiles: &[&str] = if reports_percentiles_and_cache_stats() {
+                &["0.95", "0.99", "1"]
+            } else {
+                &[]
+            };
+            for quantile in quantiles {
                 ensure(
                     samples.iter().any(|s| {
                         s.name == "typesense_request_latency_seconds"
                             && s.labels["operation"] == "search"
-                            && s.labels["quantile"] == quantile
+                            && s.labels["quantile"] == *quantile
                     }),
                     format!("search latency quantile {quantile} missing"),
                 )?;
@@ -605,6 +630,10 @@ async fn traffic_is_reported_by_the_node_that_served_it() {
     )
     .await;
 
+    if !reports_percentiles_and_cache_stats() {
+        // Typesense 27.1 reports no cache_hit_ratio, so it is left out.
+        return;
+    }
     eventually(
         "cached searches produce a non-zero cache_hit_ratio",
         Duration::from_secs(60),
@@ -651,6 +680,9 @@ async fn prometheus_loads_the_alert_rules() {
         rules,
         [
             "TypesenseExporterDown",
+            "TypesenseExporterKeyReloadFailing",
+            "TypesenseExporterProbeRefused",
+            "TypesenseExporterProbesSaturated",
             "TypesenseNoLeader",
             "TypesenseScrapeFailing",
             "TypesenseUnhealthy"
@@ -662,7 +694,14 @@ async fn prometheus_loads_the_alert_rules() {
         "no alerts while the cluster is healthy",
         Duration::from_secs(30),
         || async {
-            let active = alerts().await?;
+            // probe_refuses_targets_outside_the_allow_list refuses targets on
+            // purpose, and TypesenseExporterProbeRefused then stays active for
+            // the 10m of its increase() window.
+            let active: Vec<Value> = alerts()
+                .await?
+                .into_iter()
+                .filter(|a| a["labels"]["alertname"] != "TypesenseExporterProbeRefused")
+                .collect();
             ensure(active.is_empty(), format!("still active: {active:?}"))
         },
     )
@@ -953,6 +992,52 @@ async fn probe_refuses_targets_outside_the_allow_list() {
         .await
         .unwrap();
     assert_eq!(res.status().as_u16(), 404, "no --typesense-host configured");
+}
+
+#[tokio::test]
+async fn exporter_health_is_scraped_by_prometheus() {
+    let _stack = stack().await;
+    wait_for_healthy_cluster().await;
+
+    // The probes of the other scenarios, and Prometheus' own probes, are
+    // counted; nothing in this output names a node.
+    let text = client()
+        .get("http://localhost:8888/exporter/metrics")
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let samples = parse_samples(&text);
+    assert!(samples
+        .iter()
+        .any(|s| s.name == "typesense_exporter_build_info" && s.value == 1.0));
+    assert!(samples
+        .iter()
+        .all(|s| !s.labels.contains_key("host") && !s.labels.contains_key("port")));
+    assert!(
+        !text.contains("key_reload"),
+        "the compose stack passes its key as a variable, which never reloads"
+    );
+
+    eventually(
+        "Prometheus scrapes the exporter's own metrics",
+        Duration::from_secs(60),
+        || async {
+            prom_is(r#"up{job="typesense-exporter-self"}"#, 1.0).await?;
+            // 3 nodes are probed every 5s, so each endpoint has been read many times.
+            let ok = prom_query(
+                r#"sum(typesense_exporter_typesense_requests_total{endpoint="/health",result="ok"})"#,
+            )
+            .await?;
+            ensure(
+                ok.first().is_some_and(|(_, v)| *v >= 3.0),
+                format!("/health requests: {ok:?}"),
+            )
+        },
+    )
+    .await;
 }
 
 // ---------------------------------------------------------------------------

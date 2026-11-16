@@ -1,0 +1,139 @@
+# promtool test rules deploy/prometheus/alerts.test.yml
+#
+# Covers the exporter-health alerts in alerts.yml (group typesense-exporter),
+# each firing and not firing. The node alerts are exercised end to end by
+# tests/e2e.rs against a real cluster.
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # --- TypesenseExporterKeyReloadFailing: for 5m ---
+  - name: key reload failing fires after 5m
+    interval: 1m
+    input_series:
+      - series: 'typesense_exporter_key_reload_failing{instance="exporter:8888",key="default"}'
+        values: '0 1 1 1 1 1 1 1 1 1'
+      - series: 'typesense_exporter_key_reload_failing{instance="exporter:8888",key="prod"}'
+        values: '0 0 0 0 0 0 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: TypesenseExporterKeyReloadFailing
+        exp_alerts: [] # pending, not firing yet
+      - eval_time: 8m
+        alertname: TypesenseExporterKeyReloadFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              instance: exporter:8888
+              key: default
+            exp_annotations:
+              summary: "Exporter exporter:8888 can't read the rotated API key file for default"
+              description: "The latest reload of the default key file failed, so the exporter is still using the previous key. Fix the file (the exporter log says why) before the old key is revoked."
+
+  - name: key reload failing stays quiet when it recovers or flaps
+    interval: 1m
+    input_series:
+      # Failed for 3 minutes, then read again.
+      - series: 'typesense_exporter_key_reload_failing{instance="exporter:8888",key="default"}'
+        values: '0 1 1 1 0 0 0 0 0 0'
+      # Failing on and off, never for 5 minutes in a row.
+      - series: 'typesense_exporter_key_reload_failing{instance="exporter:8888",key="prod"}'
+        values: '0 1 0 1 0 1 0 1 0 1'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: TypesenseExporterKeyReloadFailing
+        exp_alerts: []
+
+  # --- TypesenseExporterProbeRefused: for 0m, increase over 10m ---
+  - name: refused and invalid probes alert at once and clear after 10m
+    interval: 1m
+    input_series:
+      # One refusal at minute 4.
+      - series: 'typesense_exporter_scrapes_total{handler="probe",result="refused",instance="exporter:8888"}'
+        values: '0x3 1x25'
+      # One malformed target at minute 4, on another exporter.
+      - series: 'typesense_exporter_scrapes_total{handler="probe",result="invalid",instance="exporter-2:8888"}'
+        values: '0x3 1x25'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: TypesenseExporterProbeRefused
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: TypesenseExporterProbeRefused
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              instance: exporter:8888
+            exp_annotations:
+              summary: "Exporter exporter:8888 refused or rejected probes in the last 10m"
+              description: "Something is probing targets the exporter doesn't allow (403) or with a malformed target (400). Compare the Prometheus scrape config with --probe-allowed-targets and the config file's clusters, or find who else can reach the exporter."
+          - exp_labels:
+              severity: warning
+              instance: exporter-2:8888
+            exp_annotations:
+              summary: "Exporter exporter-2:8888 refused or rejected probes in the last 10m"
+              description: "Something is probing targets the exporter doesn't allow (403) or with a malformed target (400). Compare the Prometheus scrape config with --probe-allowed-targets and the config file's clusters, or find who else can reach the exporter."
+      - eval_time: 20m
+        alertname: TypesenseExporterProbeRefused
+        exp_alerts: []
+
+  - name: successful probes and a missing /metrics host are not refusals
+    interval: 1m
+    input_series:
+      - series: 'typesense_exporter_scrapes_total{handler="probe",result="ok",instance="exporter:8888"}'
+        values: '0+3x25'
+      - series: 'typesense_exporter_scrapes_total{handler="probe",result="refused",instance="exporter:8888"}'
+        values: '0x25'
+      - series: 'typesense_exporter_scrapes_total{handler="metrics",result="not_found",instance="exporter:8888"}'
+        values: '0+1x25'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: TypesenseExporterProbeRefused
+        exp_alerts: []
+
+  # --- TypesenseExporterProbesSaturated: p95 slot wait > 1s for 10m ---
+  - name: slow slot waits alert after 10m
+    interval: 1m
+    input_series:
+      # Every probe waits between 1s and 2.5s: 10 more per minute.
+      - series: 'typesense_exporter_probe_slot_wait_seconds_bucket{instance="exporter:8888",le="1"}'
+        values: '0x40'
+      - series: 'typesense_exporter_probe_slot_wait_seconds_bucket{instance="exporter:8888",le="2.5"}'
+        values: '0+10x40'
+      - series: 'typesense_exporter_probe_slot_wait_seconds_bucket{instance="exporter:8888",le="+Inf"}'
+        values: '0+10x40'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: TypesenseExporterProbesSaturated
+        exp_alerts: [] # over 1s, but not for 10m yet
+      - eval_time: 25m
+        alertname: TypesenseExporterProbesSaturated
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              instance: exporter:8888
+            exp_annotations:
+              summary: "Probes through exporter exporter:8888 wait over 1s for a slot (p95)"
+              description: "More probes arrive than --probe-max-concurrency allows at once, so scrapes queue and may time out. Raise --probe-max-concurrency."
+
+  - name: fast slot waits and no probes do not alert
+    interval: 1m
+    input_series:
+      # Probes wait 100ms or less.
+      - series: 'typesense_exporter_probe_slot_wait_seconds_bucket{instance="exporter:8888",le="0.1"}'
+        values: '0+10x40'
+      - series: 'typesense_exporter_probe_slot_wait_seconds_bucket{instance="exporter:8888",le="1"}'
+        values: '0+10x40'
+      - series: 'typesense_exporter_probe_slot_wait_seconds_bucket{instance="exporter:8888",le="+Inf"}'
+        values: '0+10x40'
+      # An exporter nobody probes: no observations at all.
+      - series: 'typesense_exporter_probe_slot_wait_seconds_bucket{instance="idle:8888",le="1"}'
+        values: '0x40'
+      - series: 'typesense_exporter_probe_slot_wait_seconds_bucket{instance="idle:8888",le="+Inf"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: TypesenseExporterProbesSaturated
+        exp_alerts: []

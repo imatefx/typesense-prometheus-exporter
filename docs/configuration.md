@@ -84,7 +84,8 @@ Any other value is rejected at startup. Health, raft, version, collection and sc
 |---|---|
 | `/metrics` | The node set with `--typesense-host`, in Prometheus text format. Always HTTP 200; see [Failure behaviour](#failure-behaviour). 404 with an explanation when no host is configured. |
 | `/probe?target=<node>` | The same output for the named node, which must be allowed. 200 even when the node is down; 400 for a missing or malformed target; 403 for a target that isn't allowed. |
-| `/` | A short text pointer to `/metrics` and `/probe`. |
+| `/exporter/metrics` | The exporter's own health in Prometheus text format: scrape outcomes, Typesense request outcomes and durations, probes in flight and slot waits, API key reloads. Always 200. Never mixed into a node's output, so it is the same with `/metrics` and `/probe`; scrape it as its own job. See [Exporter metrics](metrics.md#exporter-metrics). |
+| `/` | A short text pointer to `/metrics`, `/probe` and `/exporter/metrics`. |
 
 ## Probing several nodes from one exporter
 
@@ -274,6 +275,18 @@ rule_files:
 
 That is one exporter per node. For one exporter in front of every node, use `/probe` instead; see [getting started](getting-started.md#one-exporter-for-the-whole-cluster).
 
+Either way, add a job for the exporter's own metrics (build info, refused probes, Typesense request failures, key reload failures). It is a plain scrape, not a `/probe`, so it has no `host` or `port` labels:
+
+```yaml
+scrape_configs:
+  - job_name: typesense-exporter-self
+    metrics_path: /exporter/metrics
+    static_configs:
+      - targets: ["exporter:8888"]   # every exporter, or the one in front of the cluster
+```
+
+The alert rules below for the exporter's health need this job.
+
 ### Alert rules
 
 [`deploy/prometheus/alerts.yml`](../deploy/prometheus/alerts.yml):
@@ -284,10 +297,21 @@ That is one exporter per node. For one exporter in front of every node, use `/pr
 | `TypesenseUnhealthy` | `typesense_health == 0` | 1m |
 | `TypesenseNoLeader` | `max(typesense_raft_state == bool 1) == 0` | 1m |
 | `TypesenseScrapeFailing` | `typesense_scrape_success{endpoint!="/health"} == 0 unless on (host, port) typesense_health == 0` | 5m |
+| `TypesenseExporterKeyReloadFailing` | `max by (instance, key) (typesense_exporter_key_reload_failing) == 1` | 5m |
+| `TypesenseExporterProbeRefused` | `sum by (instance) (increase(typesense_exporter_scrapes_total{handler="probe",result=~"refused\|invalid"}[10m])) > 0` | 0m |
+| `TypesenseExporterProbesSaturated` | `histogram_quantile(0.95, sum by (instance, le) (rate(typesense_exporter_probe_slot_wait_seconds_bucket[10m]))) > 1` | 10m |
 
 With `/probe`, `up` is per probe: the exporter answers 200 even when Typesense is down (that is `TypesenseUnhealthy`), so `TypesenseExporterDown` means the exporter is unreachable or refused the target, and it fires for every node at once when the exporter is down.
 
 `TypesenseScrapeFailing` catches a healthy node whose endpoint the exporter can't read: usually the API key lacks an action, or the Typesense version lacks the endpoint. It stays quiet while the node is down, which `TypesenseUnhealthy` already covers.
+
+The last three are in their own group and use the exporter's [own metrics](metrics.md#exporter-metrics), so they need the `/exporter/metrics` scrape job above:
+
+- `TypesenseExporterKeyReloadFailing`: a rotated API key file can't be read (unreadable, empty, not a valid header value). The exporter keeps using the previous key, so scrapes work until it is revoked; fix the file before then. The exporter log says why.
+- `TypesenseExporterProbeRefused`: someone is probing targets that aren't allowed (403) or malformed (400): a scrape config out of step with `--probe-allowed-targets` or the clusters, or another caller. It uses `for: 0m` because the 10m `increase()` window already keeps it firing for 10m after the last refusal, so a `for` would only delay the alert; it clears by itself.
+- `TypesenseExporterProbesSaturated`: probes wait more than a second at the 95th percentile for a `--probe-max-concurrency` slot, so scrapes queue and may time out. Raise `--probe-max-concurrency`.
+
+The rules are checked with `promtool test rules` ([`alerts.test.yml`](../deploy/prometheus/alerts.test.yml)): each new alert is tested firing and not firing.
 
 The `for: 1m` matters for `TypesenseNoLeader`. A normal leader election leaves the cluster without a leader for a few seconds, and the alert should not fire for that. The e2e suite checks that it doesn't.
 
