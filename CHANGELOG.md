@@ -6,11 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-16
+
 ### Added
+- **`GET /probe?target=<node>`: one exporter for a whole cluster**, using the Prometheus multi-target pattern of `blackbox_exporter`. Prometheus lists the nodes and passes each one as `target`; every node is its own scrape, so a hung node only times out its own scrape and `up` stays per node. The output is exactly what `/metrics` returns for that node, and the `host` and `port` labels name the Typesense node, so the dashboards and alerts work unchanged. A target is `host`, `host:port`, `http(s)://host[:port]` or an IPv6 address such as `[::1]:8108`; the port defaults to `--typesense-port` and the scheme to `--typesense-protocol`. Paths, queries, credentials and other schemes are rejected with 400.
+- `--probe-allowed-targets` / `TYPESENSE_PROBE_ALLOWED_TARGETS`: comma-separated `host[:port]` nodes that `/probe` may scrape. The exporter sends its API key to every node it scrapes, so a target that isn't allowed gets a 403 before any request is made. The configured `--typesense-host` is always allowed. A single `*` allows any target and logs a startup warning. The exporter also warns at startup when the default protocol is `http` and the allow list names a non-local host.
+- The Docker Compose stack runs one exporter that probes the three nodes, and the e2e suite checks that a target outside the allow list is refused.
+
 - [`deploy/prometheus/legacy-names.rules.yml`](deploy/prometheus/legacy-names.rules.yml): Prometheus recording rules that rebuild the 0.4 metric names from the 1.0 names, as a ready-to-load file (previously only inside the migration guide), with `promtool` rule tests.
 - CI job `rules`: `promtool check rules` on the alert and recording rules, and `promtool test rules` on the recording-rule tests.
 
 ### Changed
+- `--typesense-host` is optional when `--probe-allowed-targets` is set. Without it `/metrics` answers 404 and points to `/probe`; at least one of the two options is required. With `--typesense-host` set, `/metrics` is unchanged.
+- The bundled `TypesenseExporterDown` alert description now says that, with `/probe`, `up` is per probe and the alert means the exporter is unreachable or refused the target.
+- `/` mentions `/probe`. Failed Typesense calls are logged with the node (`host:port`).
 - Dashboard screenshots in the README show the 1.0 dashboards.
 - `docs/testing.md`: the bug-injection figures were re-measured on the 1.0.0 suite.
 
@@ -172,7 +181,8 @@ dashboards, a local stack and a full test suite. Metric names and labels from
 ### Added
 - First release: exports Typesense `/metrics.json` and `/stats.json` in Prometheus format.
 
-[Unreleased]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.4.1...v1.0.0
 [0.4.1]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.3.1...v0.4.0

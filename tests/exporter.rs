@@ -20,7 +20,7 @@ const COLLECTIONS: &str = include_str!("fixtures/collections.json");
 
 fn args_for(host: &str, port: u16, timeout: u64) -> CliArgs {
     CliArgs {
-        typesense_host: host.to_string(),
+        typesense_host: Some(host.to_string()),
         typesense_protocol: "http".to_string(),
         typesense_api_key: Some(API_KEY.to_string()),
         typesense_api_key_file: None,
@@ -29,6 +29,7 @@ fn args_for(host: &str, port: u16, timeout: u64) -> CliArgs {
         exporter_bind_port: 0,
         typesense_timeout: timeout,
         metric_names: MetricNames::default(),
+        probe_allowed_targets: Vec::new(),
     }
 }
 
@@ -798,4 +799,267 @@ async fn v1_unknown_fields_fall_back_to_unmapped() {
         "fields Typesense didn't send are omitted, not zeroed"
     );
     assert_eq!(health(&out), Some(0.0), "/health not served");
+}
+
+// ---- /probe -----------------------------------------------------------------
+
+/// An exporter with no `--typesense-host` that may probe `allowed`.
+async fn probe_exporter(allowed: &[String], timeout: u64) -> String {
+    let mut args = args_for("unused", 1, timeout);
+    args.typesense_host = None;
+    args.probe_allowed_targets = allowed.to_vec();
+    spawn_exporter(args).await
+}
+
+fn node_addr(mock: &MockServer) -> String {
+    let addr = mock.address();
+    format!("{}:{}", addr.ip(), addr.port())
+}
+
+async fn probe(base: &str, target: &str) -> (u16, String) {
+    let res = reqwest::Client::new()
+        .get(format!("{base}/probe"))
+        .query(&[("target", target)])
+        .send()
+        .await
+        .unwrap();
+    (res.status().as_u16(), res.text().await.unwrap())
+}
+
+#[tokio::test]
+async fn probe_scrapes_each_node_with_its_own_labels() {
+    let leader = healthy_node(1).await;
+    let follower = healthy_node(4).await;
+    let (a, b) = (node_addr(&leader), node_addr(&follower));
+    let base = probe_exporter(&[a.clone(), b.clone()], 0).await;
+
+    let (status_a, out_a) = probe(&base, &a).await;
+    let (status_b, out_b) = probe(&base, &format!("http://{b}")).await;
+
+    assert_eq!((status_a, status_b), (200, 200));
+    for (out, mock, raft_state) in [(&out_a, &leader, 1.0), (&out_b, &follower, 4.0)] {
+        let addr = mock.address();
+        let labels = format!(r#"host="{}",port="{}""#, addr.ip(), addr.port());
+        assert_eq!(raft(out), Some(raft_state), "{out}");
+        assert_eq!(health(out), Some(1.0));
+        assert!(out.contains(&labels), "labelled with the node: {labels}");
+        assert!(has_metrics_json(out) && has_stats_json(out));
+    }
+    assert!(
+        !out_a.contains(&format!("port=\"{}\"", follower.address().port())),
+        "no cross-talk between nodes"
+    );
+    for mock in [&leader, &follower] {
+        let requests = mock.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 6, "exactly one scrape per probe");
+        assert!(requests
+            .iter()
+            .all(|r| r.headers.get("x-typesense-api-key").unwrap() == API_KEY));
+    }
+}
+
+#[tokio::test]
+async fn probe_output_matches_metrics_for_the_same_node() {
+    let mock = healthy_node(1).await;
+    let addr = node_addr(&mock);
+    let mut args = args_for(&mock.address().ip().to_string(), mock.address().port(), 0);
+    args.probe_allowed_targets = vec![addr.clone()];
+    let base = spawn_exporter(args).await;
+
+    let (_, metrics) = scrape(&base).await;
+    let (status, probed) = probe(&base, &addr).await;
+
+    assert_eq!(status, 200);
+    let stable = |out: &str| -> Vec<String> {
+        out.lines()
+            .filter(|l| !l.contains("scrape_duration"))
+            .map(str::to_string)
+            .collect()
+    };
+    assert_eq!(stable(&metrics), stable(&probed));
+}
+
+#[tokio::test]
+async fn a_hung_node_only_affects_its_own_probe() {
+    let healthy = healthy_node(1).await;
+    let hung = MockServer::start().await;
+    let slow = json_body(METRICS).set_delay(Duration::from_secs(10));
+    for route in ["/metrics.json", "/stats.json", "/health", "/debug"] {
+        mount(&hung, route, slow.clone()).await;
+    }
+    let dead_port = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let dead = format!("127.0.0.1:{dead_port}");
+    let (ok, stuck) = (node_addr(&healthy), node_addr(&hung));
+    let base = probe_exporter(&[ok.clone(), stuck.clone(), dead.clone()], 1).await;
+
+    let (healthy_res, hung_res, dead_res) = tokio::join!(
+        async {
+            let started = Instant::now();
+            (probe(&base, &ok).await, started.elapsed())
+        },
+        probe(&base, &stuck),
+        probe(&base, &dead),
+    );
+
+    let ((status, out), took) = healthy_res;
+    assert_eq!(status, 200);
+    assert_eq!(health(&out), Some(1.0));
+    assert!(took < Duration::from_millis(900), "not held up: {took:?}");
+    for (status, out) in [hung_res, dead_res] {
+        assert_eq!(status, 200, "a down node is still a successful scrape");
+        assert_eq!(health(&out), Some(0.0));
+        assert_eq!(raft(&out), Some(0.0));
+        assert!(!has_metrics_json(&out));
+    }
+}
+
+#[tokio::test]
+async fn probe_refuses_targets_that_are_not_allowed_without_contacting_them() {
+    let allowed = healthy_node(1).await;
+    let forbidden = healthy_node(1).await;
+    let base = probe_exporter(&[node_addr(&allowed)], 0).await;
+
+    for target in [
+        node_addr(&forbidden),
+        format!("https://{}", node_addr(&forbidden)),
+        format!("127.0.0.1:{}", allowed.address().port() + 1),
+    ] {
+        let (status, body) = probe(&base, &target).await;
+        assert_eq!(status, 403, "{target}");
+        assert!(body.contains("not allowed"), "{body}");
+    }
+
+    let received = forbidden.received_requests().await.unwrap();
+    assert!(
+        received.is_empty(),
+        "the API key must not leave: {received:?}"
+    );
+}
+
+#[tokio::test]
+async fn probe_matches_allowed_targets_case_and_scheme_insensitively() {
+    let mock = healthy_node(1).await;
+    let port = mock.address().port();
+    let base = probe_exporter(&[format!("LocalHost:{port}")], 0).await;
+
+    // `localhost` may resolve to ::1 first; only the allow decision matters.
+    for target in [
+        format!("localhost:{port}"),
+        format!("LOCALHOST:{port}"),
+        format!("http://LocalHost:{port}"),
+    ] {
+        let (status, _) = probe(&base, &target).await;
+        assert_eq!(status, 200, "{target}");
+    }
+}
+
+#[tokio::test]
+async fn probe_always_allows_the_configured_host() {
+    let mock = healthy_node(1).await;
+    let mut args = args_for(&mock.address().ip().to_string(), mock.address().port(), 0);
+    args.probe_allowed_targets = vec!["other.example:1".to_string()];
+    let base = spawn_exporter(args).await;
+
+    let (status, out) = probe(&base, &node_addr(&mock)).await;
+
+    assert_eq!(status, 200);
+    assert_eq!(health(&out), Some(1.0));
+}
+
+#[tokio::test]
+async fn a_wildcard_allows_any_target() {
+    let a = healthy_node(1).await;
+    let b = healthy_node(4).await;
+    let base = probe_exporter(&["*".to_string()], 0).await;
+
+    let (status_a, out_a) = probe(&base, &node_addr(&a)).await;
+    let (status_b, out_b) = probe(&base, &node_addr(&b)).await;
+
+    assert_eq!((status_a, status_b), (200, 200));
+    assert_eq!((raft(&out_a), raft(&out_b)), (Some(1.0), Some(4.0)));
+}
+
+#[tokio::test]
+async fn probe_rejects_malformed_targets() {
+    let mock = healthy_node(1).await;
+    let addr = node_addr(&mock);
+    let base = probe_exporter(&["*".to_string()], 0).await;
+
+    for target in [
+        "".to_string(),
+        "   ".to_string(),
+        "ftp://host".to_string(),
+        format!("http://{addr}/metrics"),
+        format!("{addr}/x"),
+        format!("user:pw@{addr}"),
+        "host:notaport".to_string(),
+        "::1".to_string(),
+    ] {
+        let (status, body) = probe(&base, &target).await;
+        assert_eq!(status, 400, "{target:?}: {body}");
+        assert!(!body.is_empty());
+    }
+
+    let missing = reqwest::get(format!("{base}/probe")).await.unwrap();
+    assert_eq!(missing.status().as_u16(), 400);
+    assert!(missing.text().await.unwrap().contains("target"));
+
+    assert!(
+        mock.received_requests().await.unwrap().is_empty(),
+        "nothing was scraped"
+    );
+}
+
+#[tokio::test]
+async fn metrics_is_404_without_a_host_and_points_to_probe() {
+    let base = probe_exporter(&["ts".to_string()], 0).await;
+
+    let res = reqwest::get(format!("{base}/metrics")).await.unwrap();
+
+    assert_eq!(res.status().as_u16(), 404);
+    assert!(res.text().await.unwrap().contains("/probe?target="));
+}
+
+#[tokio::test]
+async fn metrics_is_unchanged_when_a_host_is_set() {
+    let mock = healthy_node(1).await;
+    let addr = mock.address();
+    let mut args = args_for(&addr.ip().to_string(), addr.port(), 0);
+    args.probe_allowed_targets = vec!["other:1".to_string()];
+    let base = spawn_exporter(args).await;
+
+    let (status, out) = scrape(&base).await;
+
+    assert_eq!(status, 200);
+    assert_eq!(health(&out), Some(1.0));
+    assert!(out.contains(&format!(r#"host="{}",port="{}""#, addr.ip(), addr.port())));
+}
+
+#[tokio::test]
+async fn root_mentions_probe() {
+    let base = probe_exporter(&["ts".to_string()], 0).await;
+
+    let body = reqwest::get(&base).await.unwrap().text().await.unwrap();
+
+    assert!(body.contains("/metrics") && body.contains("/probe"));
+}
+
+#[test]
+fn router_rejects_a_malformed_allowed_target() {
+    let mut args = args_for("127.0.0.1", 1, 0);
+    args.probe_allowed_targets = vec!["http://ts/path".to_string()];
+
+    assert!(server::router(&args).is_err());
+}
+
+#[test]
+fn router_needs_a_host_or_a_non_empty_allow_list() {
+    let mut args = args_for("unused", 1, 0);
+    args.typesense_host = None;
+    args.probe_allowed_targets = vec![String::new()];
+
+    assert!(server::router(&args).is_err());
 }

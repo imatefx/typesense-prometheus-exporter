@@ -6,15 +6,16 @@ Every option can be set as a command-line flag or as an environment variable. Th
 
 | Flag | Environment variable | Default | Description |
 |---|---|---|---|
-| `--typesense-host` | `TYPESENSE_HOST` | *(required)* | Hostname or IP of the Typesense node. Also used as the `host` label on every metric. |
+| `--typesense-host` | `TYPESENSE_HOST` | *(see description)* | Hostname or IP of the Typesense node served at `/metrics`. Also used as the `host` label on every metric. Optional when `--probe-allowed-targets` is set; one of the two is required. Without it, `/metrics` answers 404 and you scrape nodes through `/probe`. |
 | `--typesense-api-key` | `TYPESENSE_API_KEY` | *(one of the two is required)* | API key sent as `X-TYPESENSE-API-KEY`. Never printed: hidden in `--help` and redacted in debug output. See [API key permissions](#api-key-permissions). |
 | `--typesense-api-key-file` | `TYPESENSE_API_KEY_FILE` | | File holding the API key, e.g. a Docker or Kubernetes secret; surrounding whitespace is ignored. Preferred over the flag, which other users can see in the process list. |
-| `--typesense-port` | `TYPESENSE_PORT` | `8108` | Typesense API port. Also the `port` label. |
-| `--typesense-protocol` | `TYPESENSE_PROTOCOL` | `http` | `http` or `https`. HTTPS uses rustls with the bundled CA certificates. |
+| `--typesense-port` | `TYPESENSE_PORT` | `8108` | Typesense API port. Also the `port` label. It is also the default port for `/probe` targets and `--probe-allowed-targets` entries that don't name one. |
+| `--typesense-protocol` | `TYPESENSE_PROTOCOL` | `http` | `http` or `https`. HTTPS uses rustls with the bundled CA certificates. Also the default scheme for `/probe` targets that don't name one. |
 | `--typesense-timeout` | `TYPESENSE_TIMEOUT` | `5` | Seconds allowed for each Typesense request; `0` disables the timeout. See [Timeouts](#timeouts). |
 | `--exporter-bind-address` | `EXPORTER_BIND_ADDRESS` | `0.0.0.0` | Address the exporter listens on. |
 | `--exporter-bind-port` | `EXPORTER_BIND_PORT` | `8888` | Port the exporter listens on. |
 | `--metric-names` | `TYPESENSE_METRIC_NAMES` | `v1` | Which metric names to export: `v1`, `both` or `legacy`. See [Metric names](#metric-names). |
+| `--probe-allowed-targets` | `TYPESENSE_PROBE_ALLOWED_TARGETS` | *(empty)* | Comma-separated `host[:port]` nodes that `/probe` may scrape, or `*` for any. See [Probing several nodes](#probing-several-nodes-from-one-exporter). |
 
 `typesense-prometheus-exporter --help` prints the same list. Logs go to stdout at `INFO` level, and failed Typesense calls are logged at `WARN`.
 
@@ -36,8 +37,30 @@ Any other value is rejected at startup. Health, raft, version, collection and sc
 
 | Path | Response |
 |---|---|
-| `/metrics` | Prometheus text format. Always HTTP 200; see [Failure behaviour](#failure-behaviour). |
-| `/` | A short text pointer to `/metrics`. |
+| `/metrics` | The node set with `--typesense-host`, in Prometheus text format. Always HTTP 200; see [Failure behaviour](#failure-behaviour). 404 with an explanation when no host is configured. |
+| `/probe?target=<node>` | The same output for the named node, which must be allowed. 200 even when the node is down; 400 for a missing or malformed target; 403 for a target that isn't allowed. |
+| `/` | A short text pointer to `/metrics` and `/probe`. |
+
+## Probing several nodes from one exporter
+
+`/probe?target=<node>` follows the Prometheus multi-target pattern used by `blackbox_exporter`: one exporter, with Prometheus listing the nodes and passing each one as `target`. Every node is its own scrape, so a hung node only times out its own scrape, and `up`, `typesense_scrape_success` and the alerts stay per node. The output is exactly what `/metrics` would return for that node, and the `host` and `port` labels name the Typesense node, not the exporter. See [getting started](getting-started.md#one-exporter-for-the-whole-cluster) for a Prometheus config.
+
+A target is one of `host`, `host:port`, `http://host[:port]`, `https://host[:port]` or an IPv6 address in brackets such as `[::1]:8108`. The port defaults to `--typesense-port` and the scheme to `--typesense-protocol`, so one setting covers `/metrics` and `/probe`. Hosts are lowercased. Anything with a path, query, fragment, credentials or another scheme is rejected with 400.
+
+The same `--typesense-api-key` is used for every node.
+
+### Security: the allow list
+
+The exporter sends its API key to whatever node it scrapes. An open `/probe` would let anyone who can reach the exporter make it send the key to a host they control and probe internal addresses (SSRF). So a target is only scraped if it is allowed, and a target that isn't gets a 403 before any request is made (and a `WARN` in the log).
+
+- `--typesense-host:--typesense-port` is always allowed.
+- `--probe-allowed-targets` adds more, as comma-separated `host[:port]` entries, for example `typesense-1,typesense-2:9000,[::1]`. Matching is on the lowercase host and the port. The scheme is not part of the match.
+- A single `*` allows any target. The exporter logs a warning at startup. Use it only when the exporter is reachable by Prometheus alone.
+- With neither `--typesense-host` nor `--probe-allowed-targets`, the exporter refuses to start.
+
+Bind the exporter to a private interface or network as well, and use `https`.
+
+**Plaintext warning.** The exporter warns once at startup when the default protocol is `http` and the allow list is `*` or names a non-loopback host, because `/probe` could then send the key unencrypted. It does not track individual targets. A target that writes `http://` itself while the default is `https` is not warned about; that scheme comes from your Prometheus config.
 
 ## API key permissions
 
@@ -64,7 +87,7 @@ curl -X POST "$TYPESENSE/keys" -H "X-TYPESENSE-API-KEY: $ADMIN_KEY" -d '{
 
 A missing action only drops the metrics from that endpoint. The exporter logs the 401, reports `typesense_scrape_success{endpoint=...} 0` for it, and exports the rest.
 
-**Use HTTPS when Typesense is on another machine.** With `--typesense-protocol http` and a non-local host, the exporter logs a warning at startup, because the API key would travel unencrypted.
+**Use HTTPS when Typesense is on another machine.** With `--typesense-protocol http` and a non-local host (`--typesense-host`, or any non-local host in `--probe-allowed-targets`), the exporter logs a warning at startup, because the API key would travel unencrypted.
 
 ## Timeouts
 
@@ -106,6 +129,8 @@ rule_files:
   - alerts.yml
 ```
 
+That is one exporter per node. For one exporter in front of every node, use `/probe` instead; see [getting started](getting-started.md#one-exporter-for-the-whole-cluster).
+
 ### Alert rules
 
 [`deploy/prometheus/alerts.yml`](../deploy/prometheus/alerts.yml):
@@ -116,6 +141,8 @@ rule_files:
 | `TypesenseUnhealthy` | `typesense_health == 0` | 1m |
 | `TypesenseNoLeader` | `max(typesense_raft_state == bool 1) == 0` | 1m |
 | `TypesenseScrapeFailing` | `typesense_scrape_success{endpoint!="/health"} == 0 unless on (host, port) typesense_health == 0` | 5m |
+
+With `/probe`, `up` is per probe: the exporter answers 200 even when Typesense is down (that is `TypesenseUnhealthy`), so `TypesenseExporterDown` means the exporter is unreachable or refused the target, and it fires for every node at once when the exporter is down.
 
 `TypesenseScrapeFailing` catches a healthy node whose endpoint the exporter can't read: usually the API key lacks an action, or the Typesense version lacks the endpoint. It stays quiet while the node is down, which `TypesenseUnhealthy` already covers.
 
@@ -146,12 +173,12 @@ Every dashboard has a **Node** filter (`host` variable) to focus on one or more 
 
 | Variable | Default | Used for |
 |---|---|---|
-| `TYPESENSE_API_KEY` | `local-dev-key` | Typesense nodes and exporters |
+| `TYPESENSE_API_KEY` | `local-dev-key` | Typesense nodes and the exporter |
 | `GRAFANA_ADMIN_PASSWORD` | `admin` | Grafana admin login |
 
 | Path | Contents |
 |---|---|
 | `deploy/typesense/nodes` | Cluster membership, as fixed IPs (see [architecture](architecture.md#docker-compose-stack)) |
-| `deploy/prometheus/prometheus.yml` | Scrape config, with the 4s scrape timeout |
+| `deploy/prometheus/prometheus.yml` | Scrape config: one `/probe` target per node, with the 4s scrape timeout |
 | `deploy/prometheus/alerts.yml` | Alert rules |
 | `deploy/grafana/provisioning/` | Grafana data source and dashboard provisioning |

@@ -2,6 +2,8 @@ use std::{fmt, path::PathBuf};
 
 use clap::{Parser, ValueEnum};
 
+use crate::target;
+
 /// Which metric names the exporter emits. See `docs/metrics-v1.md`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 pub enum MetricNames {
@@ -30,9 +32,11 @@ impl MetricNames {
 #[derive(Parser, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct CliArgs {
-    /// Typesense Host url
-    #[arg(long, env)]
-    pub typesense_host: String,
+    /// Typesense host served at /metrics. Optional when
+    /// --probe-allowed-targets is set; /probe?target=... then scrapes any
+    /// allowed node.
+    #[arg(long, env, required_unless_present = "probe_allowed_targets")]
+    pub typesense_host: Option<String>,
 
     /// Typesense protocol
     #[arg(long, env, default_value_t= String::from("http"))]
@@ -77,6 +81,13 @@ pub struct CliArgs {
     /// `both` and `legacy` are deprecated and will be removed in 2.0.0.
     #[arg(long, env = "TYPESENSE_METRIC_NAMES", value_enum, default_value_t = MetricNames::V1)]
     pub metric_names: MetricNames,
+
+    /// Comma-separated `host[:port]` nodes that /probe may scrape (the port
+    /// defaults to --typesense-port). `*` allows any target, which lets anyone
+    /// who can reach the exporter send the API key to any host. The configured
+    /// --typesense-host is always allowed.
+    #[arg(long, env = "TYPESENSE_PROBE_ALLOWED_TARGETS", value_delimiter = ',')]
+    pub probe_allowed_targets: Vec<String>,
 }
 
 impl CliArgs {
@@ -99,13 +110,23 @@ impl CliArgs {
         }
     }
 
-    /// Whether the API key would travel unencrypted to another machine.
+    /// Whether the API key would travel unencrypted to another machine
+    /// when scraping `--typesense-host`.
     pub fn sends_key_in_plaintext(&self) -> bool {
-        let local = matches!(
-            self.typesense_host.as_str(),
-            "localhost" | "127.0.0.1" | "::1" | "[::1]"
-        );
-        self.typesense_protocol.eq_ignore_ascii_case("http") && !local
+        self.typesense_host
+            .as_deref()
+            .is_some_and(|host| !target::is_loopback(host))
+            && self.typesense_protocol.eq_ignore_ascii_case("http")
+    }
+
+    /// Whether /probe could send the API key unencrypted to another machine:
+    /// the default protocol is http and the allow list is `*` or names a
+    /// non-loopback host. A target that spells out `http://` itself is not
+    /// covered; that is the operator's choice in the Prometheus config.
+    pub fn probe_sends_key_in_plaintext(&self) -> bool {
+        self.typesense_protocol.eq_ignore_ascii_case("http")
+            && target::AllowList::parse(&self.probe_allowed_targets, self.typesense_port)
+                .is_ok_and(|list| list.has_remote())
     }
 }
 
@@ -125,6 +146,7 @@ impl fmt::Debug for CliArgs {
             .field("exporter_bind_port", &self.exporter_bind_port)
             .field("typesense_timeout", &self.typesense_timeout)
             .field("metric_names", &self.metric_names)
+            .field("probe_allowed_targets", &self.probe_allowed_targets)
             .finish()
     }
 }
@@ -247,6 +269,64 @@ mod tests {
         assert!(remote.sends_key_in_plaintext());
         assert!(!local.sends_key_in_plaintext());
         assert!(!tls.sends_key_in_plaintext());
+    }
+
+    #[test]
+    fn parses_probe_allowed_targets() {
+        let none = parse(&["--typesense-host=ts", "--typesense-api-key=k"]).unwrap();
+        assert!(none.probe_allowed_targets.is_empty());
+
+        let args = parse(&[
+            "--typesense-host=ts",
+            "--typesense-api-key=k",
+            "--probe-allowed-targets=a:1,b,[::1]:2",
+        ])
+        .unwrap();
+        assert_eq!(args.probe_allowed_targets, ["a:1", "b", "[::1]:2"]);
+    }
+
+    #[test]
+    fn probe_allowed_targets_reads_its_environment_variable() {
+        let arg = CliArgs::command()
+            .get_arguments()
+            .find(|a| a.get_id() == "probe_allowed_targets")
+            .unwrap()
+            .clone();
+        assert_eq!(
+            arg.get_env().and_then(|e| e.to_str()),
+            Some("TYPESENSE_PROBE_ALLOWED_TARGETS")
+        );
+    }
+
+    #[test]
+    fn host_is_optional_with_an_allow_list() {
+        let args = parse(&["--typesense-api-key=k", "--probe-allowed-targets=ts1,ts2"]).unwrap();
+        assert_eq!(args.typesense_host, None);
+        assert!(!args.sends_key_in_plaintext());
+    }
+
+    #[test]
+    fn needs_a_host_or_an_allow_list() {
+        let err = parse(&["--typesense-api-key=k"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+        assert!(parse(&["--typesense-host=ts", "--typesense-api-key=k"]).is_ok());
+    }
+
+    #[test]
+    fn flags_plaintext_keys_sent_by_probe() {
+        let probe = |extra: &[&str]| {
+            let mut a = vec!["--typesense-api-key=k"];
+            a.extend_from_slice(extra);
+            parse(&a).unwrap().probe_sends_key_in_plaintext()
+        };
+        assert!(probe(&["--probe-allowed-targets=search.internal"]));
+        assert!(probe(&["--probe-allowed-targets=*"]));
+        assert!(!probe(&["--probe-allowed-targets=localhost,127.0.0.1:9"]));
+        assert!(!probe(&["--typesense-host=ts"]), "no allow list");
+        assert!(!probe(&[
+            "--probe-allowed-targets=search.internal",
+            "--typesense-protocol=https"
+        ]));
     }
 
     #[test]

@@ -1,11 +1,8 @@
 pub mod models;
 
-use std::time::Duration;
-
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 
-use crate::cli::CliArgs;
 use models::{
     typesense_collection_model::TypesenseCollection, typesense_debug_model::TypesenseDebug,
     typesense_health_model::TypesenseHealth, typesense_metrics_model::TypesenseMetrics,
@@ -20,19 +17,13 @@ pub struct TypesenseClient {
 }
 
 impl TypesenseClient {
-    pub fn new(args: &CliArgs, api_key: String) -> reqwest::Result<Self> {
-        let mut builder = Client::builder();
-        if args.typesense_timeout > 0 {
-            builder = builder.timeout(Duration::from_secs(args.typesense_timeout));
-        }
-        Ok(Self {
-            http: builder.build()?,
-            base_url: format!(
-                "{}://{}:{}",
-                args.typesense_protocol, args.typesense_host, args.typesense_port
-            ),
+    /// `http` is shared by every client so connections are pooled across targets.
+    pub fn new(http: Client, base_url: String, api_key: String) -> Self {
+        Self {
+            http,
+            base_url,
             api_key,
-        })
+        }
     }
 
     pub async fn metrics(&self) -> reqwest::Result<TypesenseMetrics> {

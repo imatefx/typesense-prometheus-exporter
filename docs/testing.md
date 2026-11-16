@@ -4,9 +4,9 @@ Three layers, from fast and isolated to slow and real:
 
 | Layer | Where | Runs against | Count | Time | Needs |
 |---|---|---|---|---|---|
-| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 48 | < 1s | Rust |
-| Integration | [`tests/exporter.rs`](../tests/exporter.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 24 | ~1s | Rust |
-| End-to-end | [`tests/e2e.rs`](../tests/e2e.rs) | A real 3-node Typesense cluster, exporters, Prometheus and Grafana in Docker | 8 | ~3–5 min | Rust, Docker |
+| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 67 | < 1s | Rust |
+| Integration | [`tests/exporter.rs`](../tests/exporter.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 37 | ~1s | Rust |
+| End-to-end | [`tests/e2e.rs`](../tests/e2e.rs) | A real 3-node Typesense cluster, one exporter, Prometheus and Grafana in Docker | 9 | ~3–5 min | Rust, Docker |
 
 ```bash
 make test               # lint + unit + integration
@@ -64,6 +64,25 @@ The 1.0 names ([design](metrics-v1.md)) and the `--metric-names` modes:
 | `unchanged_families_are_emitted_once_in_every_mode` | Health, raft, info, documents and scrape-health families appear exactly once in every mode |
 | `both_mode_keeps_legacy_output_byte_for_byte` | Every `legacy` line, `# HELP` and `# TYPE` included, appears unchanged in `both`; `legacy` has the 0.4 shape |
 
+### Probe targets: `src/target.rs`
+
+| Test | Verifies |
+|---|---|
+| `bare_host_takes_defaults` | `host` takes the default scheme and port |
+| `host_with_port` | `host:port` for names and IPv4 |
+| `explicit_schemes` | `http://` and `https://` (any case), with or without a port |
+| `hosts_are_lowercased` | Upper-case hosts are normalised |
+| `ipv6_in_brackets` | `[::1]`, `[::1]:8108`, `https://[2001:DB8::1]:443`; addresses are written canonically |
+| `base_url_brackets_ipv6` | The URL the exporter calls brackets IPv6 hosts |
+| `surrounding_whitespace_is_trimmed` | Whitespace around a target is ignored |
+| `rejects_bad_targets` | Empty, other schemes, paths, queries, fragments, credentials, bad or zero ports, unbracketed IPv6, bad characters |
+| `normalizes_and_detects_loopback` | Brackets and case are normalised; `localhost`, `127.0.0.1` and `::1` are loopback |
+| `allow_list_matches_host_and_port_ignoring_scheme_and_case` | An entry allows its host and port in any scheme or case; a different port is refused |
+| `allow_list_wildcard_allows_everything` | `*` allows any target |
+| `empty_allow_list_allows_nothing_until_a_node_is_added` | Blank entries are skipped; the configured host can be added |
+| `allow_list_rejects_bad_entries` | Entries with a scheme, path, credentials, a zero port or bare IPv6 are errors |
+| `has_remote_ignores_loopback_entries` | Only non-loopback entries (or `*`) count as remote |
+
 ### Models: `src/typesense/models/`
 
 | Test | Verifies |
@@ -92,6 +111,11 @@ The 1.0 names ([design](metrics-v1.md)) and the `--metric-names` modes:
 | `parses_metric_names` | `--metric-names` accepts `v1`, `both` and `legacy` and rejects anything else |
 | `metric_names_select_the_name_sets` | `v1` selects the 1.0 names, `legacy` the 0.4 names, `both` both |
 | `metric_names_reads_its_environment_variable` | `--metric-names` is also read from `TYPESENSE_METRIC_NAMES` |
+| `parses_probe_allowed_targets` | `--probe-allowed-targets` is empty by default and splits on commas |
+| `probe_allowed_targets_reads_its_environment_variable` | Also read from `TYPESENSE_PROBE_ALLOWED_TARGETS` |
+| `host_is_optional_with_an_allow_list` | `--typesense-host` can be left out when an allow list is set |
+| `needs_a_host_or_an_allow_list` | With neither, parsing fails with a missing-argument error |
+| `flags_plaintext_keys_sent_by_probe` | Plain HTTP with `*` or a non-loopback allowed host is flagged; loopback, no allow list and HTTPS are not |
 
 ## Integration tests: `tests/exporter.rs`
 
@@ -126,23 +150,42 @@ The exporter runs with the default `--metric-names=v1` unless a test says otherw
 | `both_names_emit_old_and_new_and_shared_families_once` | `--metric-names=both` | Both name sets; shared families (health, raft, info, documents, scrape health) once; every 0.4 series identical to `legacy` |
 | `v1_unknown_fields_fall_back_to_unmapped` | Fields with no 1.0 name in `/metrics.json` and `/stats.json` | `typesense_unmapped{source,key}` with the raw value; fields Typesense didn't send are absent |
 
+`/probe`, using two or three mock nodes and an exporter without `--typesense-host`:
+
+| Test | Scenario | Expected |
+|---|---|---|
+| `probe_scrapes_each_node_with_its_own_labels` | Probe a leader and a follower | Each answer has its own raft state and `host`/`port` labels; each node got exactly 6 requests, all with the API key |
+| `probe_output_matches_metrics_for_the_same_node` | `/metrics` and `/probe` for the configured node | Identical output apart from the scrape duration |
+| `a_hung_node_only_affects_its_own_probe` | One healthy, one hung, one unreachable node, probed together | The healthy probe is quick and healthy; the others return 200 with health 0 and no metrics |
+| `probe_refuses_targets_that_are_not_allowed_without_contacting_them` | Probe a node, with another port or scheme, that isn't in the allow list | 403 `not allowed`; the node received no request, so no API key left |
+| `probe_matches_allowed_targets_case_and_scheme_insensitively` | Allow `LocalHost:port`, probe `localhost`, `LOCALHOST` and `http://LocalHost` | All allowed |
+| `probe_always_allows_the_configured_host` | `--typesense-host` set, allow list names another node | Probing the configured host works |
+| `a_wildcard_allows_any_target` | `--probe-allowed-targets=*` | Any node can be probed |
+| `probe_rejects_malformed_targets` | Empty, other scheme, path, credentials, bad port, bare IPv6, missing parameter | 400 with a reason; nothing is scraped |
+| `metrics_is_404_without_a_host_and_points_to_probe` | No `--typesense-host` | `/metrics` is 404 and mentions `/probe?target=` |
+| `metrics_is_unchanged_when_a_host_is_set` | `--typesense-host` and an allow list | `/metrics` works as before |
+| `root_mentions_probe` | `GET /` | Mentions `/metrics` and `/probe` |
+| `router_rejects_a_malformed_allowed_target` | `--probe-allowed-targets` entry with a path | `server::router` returns an error |
+| `router_needs_a_host_or_a_non_empty_allow_list` | No host and an empty allow list (clap accepts an empty `TYPESENSE_PROBE_ALLOWED_TARGETS`) | `server::router` returns an error |
+
 **Checking that the tests catch bugs.** The suite was checked by breaking the code on purpose (re-measured for 1.0.0):
 - Removing the API key header failed 17 of the 24 integration tests.
 - Treating any `/health` response as healthy failed `health_ok_false_with_200_is_unhealthy`, and nothing else.
 
 ## End-to-end tests: `tests/e2e.rs`
 
-These run against the [Docker Compose stack](architecture.md#docker-compose-stack): three Typesense 30.1 nodes peering by fixed IP, one exporter per node (with `TYPESENSE_METRIC_NAMES=v1`), Prometheus with the alert rules, and Grafana with the dashboards provisioned. The checks use the 1.0 names.
+These run against the [Docker Compose stack](architecture.md#docker-compose-stack): three Typesense 30.1 nodes peering by fixed IP, one exporter probing every node (`TYPESENSE_PROBE_ALLOWED_TARGETS`, `TYPESENSE_METRIC_NAMES=v1`), Prometheus scraping `/probe` for each node, with the alert rules, and Grafana with the dashboards provisioned. The checks use the 1.0 names.
 
 | Test | What it does | Checks |
 |---|---|---|
-| `cluster_has_one_leader_and_two_followers` | Reads every exporter and Prometheus | All nodes healthy; roles are one leader and two followers; each exporter reports only its own node; 1.0 system metrics (`typesense_system_memory_total_bytes`) and no 0.4 `typesense_metrics`/`typesense_stats`; Typesense version, committed raft index and queued writes from every node; every exporter reads all six endpoints (`typesense_scrape_success` 1); all 3 exporters scraped |
+| `cluster_has_one_leader_and_two_followers` | Probes every node through the exporter and reads Prometheus | All nodes healthy; roles are one leader and two followers; each probe reports only its own node; 1.0 system metrics (`typesense_system_memory_total_bytes`) and no 0.4 `typesense_metrics`/`typesense_stats`; Typesense version, committed raft index and queued writes from every node; every probe reads all six endpoints (`typesense_scrape_success` 1); all 3 probes up |
 | `traffic_is_reported_by_the_node_that_served_it` | Creates a collection through node 1 and searches every node, some searches with `use_cache=true` | Documents replicate to every node; every exporter reports 3 documents in the collection; reads by document ID show up as one `typesense_route_requests_per_second` series with `documents/:id`, never raw IDs; each exporter reports the search traffic its own node served; `typesense_request_latency_seconds` reports search quantiles 0.95, 0.99 and 1 (max); `cache_hit_ratio` goes above 0 |
 | `followers_catch_up_and_replication_lag_returns_to_zero` | Writes 20 documents through node 1 | Every node's committed raft index moves past the writes; replication lag (max − min committed index) returns to 0; every node reports 23 documents |
 | `prometheus_loads_the_alert_rules` | Reads Prometheus rules and alerts | All four rules loaded; no alerts while the cluster is healthy |
 | `grafana_dashboards_show_every_node` | Queries Grafana's data source, the same path the panels use | Data source healthy; all four dashboards provisioned; per-core CPU (`typesense_system_cpu_core_active_ratio`), network received rate, raft state and health return data for all three nodes |
 | `leader_failure_is_reported_and_a_new_leader_is_elected` | Stops the current leader | Stopped node reports health 0 and raft 0; a different node becomes leader; `TypesenseUnhealthy` goes pending; `TypesenseNoLeader` never fires during the election and clears afterwards |
-| `hung_node_and_quorum_loss_raise_no_leader` | Stops one follower and **pauses** (freezes) the other, so 2 of 3 nodes are gone | The frozen node's exporter answers in under 4s (the scrape timeout), reports health 0 and every endpoint as failed; all exporters still scraped; no node reports leader; `TypesenseNoLeader` goes pending |
+| `hung_node_and_quorum_loss_raise_no_leader` | Stops one follower and **pauses** (freezes) the other, so 2 of 3 nodes are gone | The frozen node's probe answers in under 4s (the scrape timeout), reports health 0 and every endpoint as failed; all probes still up; no node reports leader; `TypesenseNoLeader` goes pending |
+| `probe_refuses_targets_outside_the_allow_list` | Probes nodes and hosts that aren't allowed, and a target with a path | 403 for each target outside the allow list, 400 for the path; `/metrics` is 404 because no host is configured |
 | `parses_exporter_output` | No Docker needed | The test's own Prometheus-format parser handles labels containing spaces |
 
 **How the scenarios stay independent:**

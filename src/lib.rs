@@ -3,4 +3,5 @@
 pub mod cli;
 pub mod prometheus_exp;
 pub mod server;
+pub mod target;
 pub mod typesense;

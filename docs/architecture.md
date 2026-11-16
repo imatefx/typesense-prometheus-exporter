@@ -2,7 +2,7 @@
 
 ## Overview
 
-The exporter is a small stateless HTTP service. Each time Prometheus scrapes `/metrics`, the exporter queries one Typesense node, turns the answers into Prometheus metrics, and returns them. It keeps nothing between scrapes.
+The exporter is a small stateless HTTP service. Each time Prometheus scrapes `/metrics` (the node set with `--typesense-host`) or `/probe?target=<node>` (any allowed node), the exporter queries one Typesense node, turns the answers into Prometheus metrics, and returns them. It keeps nothing between scrapes.
 
 ```mermaid
 flowchart LR
@@ -11,14 +11,12 @@ flowchart LR
         T2["typesense-2 (leader)"]
         T3["typesense-3"]
     end
-    E1["exporter-1"] -->|"/metrics.json /stats.json<br/>/health /debug<br/>/status /collections"| T1
-    E2["exporter-2"] --> T2
-    E3["exporter-3"] --> T3
-    P["Prometheus<br/>+ alert rules"] -->|"GET /metrics"| E1 & E2 & E3
+    E["exporter"] -->|"/metrics.json /stats.json<br/>/health /debug<br/>/status /collections"| T1 & T2 & T3
+    P["Prometheus<br/>+ alert rules"] -->|"GET /probe?target=node"| E
     G["Grafana<br/>4 dashboards"] -->|PromQL| P
 ```
 
-**Run one exporter per Typesense node.** Each node reports only its own raft role, health and system resources, and only the requests it served itself. An exporter in front of a load balancer would report a random node on each scrape.
+**One scrape is one node.** Each node reports only its own raft role, health and system resources, and only the requests it served itself, so an exporter must never sit in front of a load balancer: it would report a random node on each scrape. Either run an exporter per node and scrape `/metrics`, or run one exporter and have Prometheus scrape `/probe?target=<node>` once per node, as `blackbox_exporter` does. Both give the same output for a node, and the `host` and `port` labels always name the Typesense node.
 
 ## A scrape, step by step
 
@@ -27,7 +25,8 @@ sequenceDiagram
     participant P as Prometheus
     participant E as Exporter
     participant T as Typesense node
-    P->>E: GET /metrics
+    P->>E: GET /metrics or /probe?target=node
+    Note over E: /probe: parse the target, check the allow list<br/>(400 malformed, 403 not allowed, no request sent)
     par concurrently, each with TYPESENSE_TIMEOUT
         E->>T: GET /metrics.json
         E->>T: GET /stats.json
@@ -41,7 +40,7 @@ sequenceDiagram
     E-->>P: 200, Prometheus text format
 ```
 
-1. **Fetch.** `server::metrics_handler` calls the six Typesense endpoints concurrently with `tokio::join!`. They share one reqwest client, which applies `TYPESENSE_TIMEOUT` to each request.
+1. **Fetch.** `server::scrape` calls the six Typesense endpoints concurrently with `tokio::join!`. `/metrics` calls it for the configured node; `/probe` parses the target (`target::Target`), checks it against the allow list (`target::AllowList`) and calls it for that node, with a `TypesenseClient` built per request around the one shared reqwest client. That client applies `TYPESENSE_TIMEOUT` to each request and pools connections across targets.
 2. **Decide.** Each result is either kept or logged and dropped (`log_failure`). The handler builds a `Scrape` from what survived: optional metrics, stats, status and collections, a health flag, a raft state and a version.
 3. **Map and render.** `prometheus_exp::generate_metrics` builds a fresh Prometheus registry for this scrape and adds a series for each value that has data, then encodes it to text. `/metrics.json` and `/stats.json` values go through a name-mapping step chosen by `--metric-names` (the `metric_names` field of `Scrape`): `export_v1_metrics` / `export_v1_stats` map each Typesense field to its 1.0 family, convert units (ms → seconds, percent → ratio) and send fields without a name to `typesense_unmapped`; `export_legacy_metrics` / `export_legacy_stats` produce the 0.4 families. `both` runs both. The other families are added once, whatever the mode.
 
@@ -53,8 +52,9 @@ A fresh registry on every scrape means a metric that disappears from Typesense a
 |---|---|
 | `src/main.rs` | Entry point: logging setup, parse CLI, `server::run` |
 | `src/cli.rs` | `CliArgs`: flags and environment variables (clap), including `MetricNames` (`v1`, `both`, `legacy`) |
-| `src/server.rs` | axum router (`/`, `/metrics`), scrape handler, graceful shutdown |
-| `src/typesense/mod.rs` | `TypesenseClient`: one HTTP client, base URL, API key; one method per endpoint |
+| `src/server.rs` | axum router (`/`, `/metrics`, `/probe`), the shared `scrape`, the one HTTP client, graceful shutdown |
+| `src/target.rs` | `Target`: strict parsing of `/probe` targets (IPv6, default scheme and port, no paths or credentials); `AllowList`: the nodes `/probe` may contact |
+| `src/typesense/mod.rs` | `TypesenseClient`: a shared HTTP client, base URL, API key; one method per endpoint |
 | `src/typesense/models/` | serde models for the six endpoint responses. For the 1.0 names, `TypesenseMetrics::fixed_entries()` gives the fixed `/metrics.json` fields and `core_number()` picks the core out of a per-core CPU key; the 1.0 mapping reads the remaining fields (per-core values and unmapped ones) from `other` directly. `TypesenseMetrics::entries()` gives the `(key, value)` pairs for the 0.4 output. `TypesenseStats::entries()` gives every numeric `/stats.json` field and feeds both name sets |
 | `src/prometheus_exp.rs` | `Scrape`, plus rendering to Prometheus text: the 1.0 and 0.4 name mappings, unit conversion, per-collection parsing, label handling |
 | `src/lib.rs` | Exposes the modules so integration and e2e tests can build the real router |
@@ -65,7 +65,9 @@ A fresh registry on every scrape means a metric that disappears from Typesense a
 
 **Health and raft state are always present.** They are the exception to the rule above. When a node is unreachable, the useful answer is `typesense_health 0` and `typesense_raft_state 0`, because alerts are built on them.
 
-**`/metrics` always returns 200.** Typesense failures are reported in the metrics, not as an HTTP error. `up == 0` is kept for "the exporter itself is down".
+**`/metrics` and `/probe` return 200 when Typesense is down.** Typesense failures are reported in the metrics, not as an HTTP error. `up == 0` is kept for "the exporter itself is down" (or, for `/probe`, "the target was refused", which is a 403 or 400).
+
+**`/probe` only contacts allowed nodes.** The exporter sends its API key to the node it scrapes, so an open `/probe` would leak the key and allow SSRF. A target must match `--probe-allowed-targets` (or the configured `--typesense-host`) on lowercase host and port before any request is made; `*` opts out. Prometheus lists the nodes, and the exporter doesn't discover them, because Typesense has no API for cluster peers.
 
 **Timeout below the scrape timeout.** A hung Typesense node must not hold the response past Prometheus' scrape timeout, or the whole scrape is lost and the problem shows up as the wrong alert. See [configuration](configuration.md#timeouts).
 
@@ -89,10 +91,8 @@ flowchart TB
         T1["typesense-1<br/>10.89.0.11"] <-->|raft :8107| T2["typesense-2<br/>10.89.0.12"]
         T2 <-->|raft :8107| T3["typesense-3<br/>10.89.0.13"]
         T1 <-->|raft :8107| T3
-        E1[exporter-1] --> T1
-        E2[exporter-2] --> T2
-        E3[exporter-3] --> T3
-        P[prometheus] --> E1 & E2 & E3
+        E[exporter] -->|"allowed targets"| T1 & T2 & T3
+        P[prometheus] -->|"/probe?target=typesense-N"| E
         G[grafana] --> P
         I["grafana-dashboards<br/>(init)"] -.->|"copies dashboards,<br/>fills in data source"| G
     end

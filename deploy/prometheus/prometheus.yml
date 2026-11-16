@@ -10,6 +10,18 @@ rule_files:
   - alerts.yml
 
 scrape_configs:
+  # One exporter probes every node (multi-target pattern, like
+  # blackbox_exporter): each target is a separate scrape of
+  # exporter:8888/probe?target=<node>, so a hung node only times out its own
+  # scrape and `up` is per node.
   - job_name: typesense-exporter
+    metrics_path: /probe
     static_configs:
-      - targets: ["exporter-1:8888", "exporter-2:8888", "exporter-3:8888"]
+      - targets: ["typesense-1:8108", "typesense-2:8108", "typesense-3:8108"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: exporter:8888

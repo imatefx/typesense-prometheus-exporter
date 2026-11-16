@@ -6,7 +6,11 @@ groups:
         for: 1m
         labels: { severity: critical }
         annotations:
-          summary: "Typesense exporter {{ $labels.instance }} is not being scraped"
+          # `up` is per probe: the exporter answers 200 even when Typesense is
+          # down (that is TypesenseUnhealthy), so up == 0 means the exporter
+          # itself is unreachable or refused the target. If it is down, all
+          # nodes alert at once.
+          summary: "Probing {{ $labels.instance }} through the exporter failed: the exporter is down, unreachable, or refuses this target"
 
       - alert: TypesenseUnhealthy
         expr: typesense_health == 0

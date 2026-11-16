@@ -1,8 +1,8 @@
 # Getting started
 
 Two ways in:
-- **Try the full stack locally:** a Typesense cluster with exporters, Prometheus and Grafana, all running in Docker. Nothing to configure.
-- **Monitor your own Typesense:** run the exporter next to each Typesense node and point Prometheus at it.
+- **Try the full stack locally:** a Typesense cluster with one exporter, Prometheus and Grafana, all running in Docker. Nothing to configure.
+- **Monitor your own Typesense:** run one exporter (or one per node) and point Prometheus at it.
 
 ## Try the full stack (5 minutes)
 
@@ -21,14 +21,14 @@ Then open:
 |---|---|---|
 | Grafana | http://localhost:3000 | `admin` / `admin`; dashboards are in the **Typesense** folder |
 | Prometheus | http://localhost:9090 | **Alerts** shows the three Typesense alert rules |
-| Exporters | http://localhost:8888/metrics, `:8889`, `:8890` | one per Typesense node |
+| Exporter | http://localhost:8888/probe?target=typesense-1 (also `-2`, `-3`) | one exporter, probing every node |
 | Typesense | http://localhost:8108, `:8109`, `:8110` | API key `local-dev-key` |
 
 Things to try:
 
 ```bash
 # Who is the raft leader?
-curl -s localhost:8888/metrics localhost:8889/metrics localhost:8890/metrics | grep '^typesense_raft_state'
+for n in 1 2 3; do curl -s "localhost:8888/probe?target=typesense-$n"; done | grep '^typesense_raft_state'
 
 # Kill a node and watch the Cluster Overview dashboard: a new leader takes over within seconds
 docker compose stop typesense-1
@@ -39,15 +39,15 @@ Tear down with `docker compose down -v`.
 
 ## Monitor your own Typesense
 
-### 1. Run one exporter per Typesense node
+### 1. Run the exporter
 
-Each node reports its own health, raft role and the traffic it served, so you need one exporter per node. Docker:
+Each node reports its own health, raft role and the traffic it served, so Prometheus has to scrape every node separately. Either run one exporter per node (this section), or one exporter for the whole cluster ([below](#one-exporter-for-the-whole-cluster)). Docker:
 
 ```bash
 docker run -d --name typesense-exporter -p 8888:8888 \
   -e TYPESENSE_HOST=typesense-1.internal \
   -e TYPESENSE_API_KEY=<admin-api-key> \
-  imatefx/typesense-prometheus-exporter:v1.0.0
+  imatefx/typesense-prometheus-exporter:v1.1.0
 ```
 
 Or the binary. Build it with `cargo build --release`, or use the static Linux builds from `./build-cross.sh`.
@@ -83,6 +83,40 @@ scrape_configs:
 rule_files:
   - alerts.yml            # copy deploy/prometheus/alerts.yml
 ```
+
+### One exporter for the whole cluster
+
+Instead of one exporter per node, run a single exporter without `--typesense-host`, and list the nodes it may probe:
+
+```bash
+docker run -d --name typesense-exporter -p 8888:8888 \
+  -e TYPESENSE_PROBE_ALLOWED_TARGETS=typesense-1.internal,typesense-2.internal,typesense-3.internal \
+  -e TYPESENSE_API_KEY=<admin-api-key> \
+  imatefx/typesense-prometheus-exporter:v1.1.0
+```
+
+Prometheus lists the nodes and passes each one to `/probe`, like `blackbox_exporter`:
+
+```yaml
+scrape_configs:
+  - job_name: typesense-exporter
+    metrics_path: /probe
+    scrape_timeout: 10s   # must be above TYPESENSE_TIMEOUT (5s by default)
+    static_configs:
+      - targets:          # the Typesense nodes, not the exporter
+          - typesense-1.internal:8108
+          - typesense-2.internal:8108
+          - typesense-3.internal:8108
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: exporter.internal:8888   # the exporter
+```
+
+Check it with `curl -s 'localhost:8888/probe?target=typesense-1.internal' | grep -E '^typesense_(health|raft_state)'`. The `host` and `port` labels on the metrics name the Typesense node, so the dashboards and alerts work unchanged. Targets that aren't in `TYPESENSE_PROBE_ALLOWED_TARGETS` get a 403, because the exporter sends its API key to every node it probes; see [the security note](configuration.md#security-the-allow-list). `up` is now per probe, so `TypesenseExporterDown` fires for every node at once when the exporter is down.
 
 ### 3. Import the Grafana dashboards
 
