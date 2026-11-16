@@ -1,33 +1,58 @@
 # Typesense Prometheus Exporter
+
+[![CI](https://github.com/imatefx/typesense-prometheus-exporter/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/imatefx/typesense-prometheus-exporter/actions/workflows/ci.yml)
+[![Release build](https://github.com/imatefx/typesense-prometheus-exporter/actions/workflows/rust.yml/badge.svg)](https://github.com/imatefx/typesense-prometheus-exporter/actions/workflows/rust.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/imatefx/typesense-prometheus-exporter/badges/coverage.json)](https://github.com/imatefx/typesense-prometheus-exporter/actions/workflows/ci.yml)
+[![Docker version](https://img.shields.io/docker/v/imatefx/typesense-prometheus-exporter?sort=semver&label=docker)](https://hub.docker.com/r/imatefx/typesense-prometheus-exporter)
+[![Docker pulls](https://img.shields.io/docker/pulls/imatefx/typesense-prometheus-exporter)](https://hub.docker.com/r/imatefx/typesense-prometheus-exporter)
+[![Image size](https://img.shields.io/docker/image-size/imatefx/typesense-prometheus-exporter/latest)](https://hub.docker.com/r/imatefx/typesense-prometheus-exporter/tags)
+[![Platforms](https://img.shields.io/badge/platforms-linux%2Famd64%20%7C%20linux%2Farm64-blue)](https://hub.docker.com/r/imatefx/typesense-prometheus-exporter/tags)
+[![Typesense](https://img.shields.io/badge/tested%20with-Typesense%2030.1-e5446d)](https://typesense.org)
+[![License: MIT](https://img.shields.io/github/license/imatefx/typesense-prometheus-exporter)](LICENSE)
+
+Exposes [Typesense](https://typesense.org) metrics, stats, health and raft cluster state in [Prometheus](https://prometheus.io) format, with ready-made Grafana dashboards and alert rules.
+
+## Features
+
+- **System and memory metrics** from `/metrics.json`: CPU (every core), disk, memory, swap, network, and Typesense allocator memory.
+- **Request stats** from `/stats.json`: requests per second and latency by operation, per endpoint and per collection, plus pending write batches and cache hit ratio.
+- **Health and cluster state:** `typesense_health` and `typesense_raft_state` (leader or follower), so you can alert on unhealthy nodes or a cluster with no leader.
+- **Honest failures:** if Typesense can't be reached, its metrics are left out rather than reported as zeros, and a request timeout keeps a hung node from stalling scrapes.
+- **Small static image:** about 13 MB, built `FROM scratch` for linux/amd64 and linux/arm64.
+- **Batteries included:** 3 Grafana dashboards, Prometheus alert rules, and a one-command Docker Compose cluster for trying it out.
+
 ## Screenshots
-### Typesense Metrics Dashboard
-![Typesense-Metrics-Dashboards-Dashboards-Grafana](https://github.com/imatefx/typesense-prometheus-exporter/assets/3025904/36daa26f-b217-4c1c-9404-2a480a19efe2)
 
-### Typesense Metrics By Collection Dashboard
-![Typesense-By-Collection-Dashboards-Dashboards-Grafana](https://github.com/imatefx/typesense-prometheus-exporter/assets/3025904/026e6ed9-2a9b-4800-8ae6-2f90aca9fcb7)
+Captured from the bundled Docker Compose stack: a 3-node cluster under generated traffic.
 
-### Typesense Stats Dashboard
-![Typesense-Stats-Dashboards-Dashboards-Grafana](https://github.com/imatefx/typesense-prometheus-exporter/assets/3025904/afc7948a-de7a-4b8f-a1e6-a8394c61859f)
+### Typesense Metrics
+![Typesense Metrics dashboard](screenshots/Typesense-Metrics.png)
 
-## Introduction
+### Typesense Stats
+![Typesense Stats dashboard](screenshots/Typesense-Stats.png)
 
-This repository contains the Typesense-Prometheus-Exporter, a tool designed to expose Typesense metrics and stats in Prometheus format.
+### Typesense By Collection
+![Typesense By Collection dashboard](screenshots/Typesense-By-Collection.png)
 
-### About Typesense
+## Quick start
 
-[Typesense](https://typesense.org) is an open-source, typo-tolerant search engine that delivers fast and relevant search results. It's designed for simplicity and ease of use, providing a scalable, highly available, and easy-to-scale search solution.
+Try the full stack (Typesense cluster, exporters, Prometheus, Grafana) locally:
 
-### About Prometheus
+```
+docker compose up -d --build
+./scripts/traffic.sh 300        # optional: generate traffic for the dashboards
+open http://localhost:3000      # Grafana, admin / admin
+```
 
-[Prometheus](https://prometheus.io/) is an open-source systems monitoring and alerting toolkit. Known for its multi-dimensional data model and flexible query language, Prometheus integrates with various external systems for comprehensive monitoring.
+Or run just the exporter against your own Typesense node:
 
-### About Prometheus Exporters
-
-Prometheus exporters are tools for translating metrics from third-party systems into Prometheus-readable format, crucial for monitoring non-Prometheus systems with Prometheus.
-
-## What It Does
-
-This exporter fetches metrics and stats from a configured Typesense instance and exports them in Prometheus format, enabling their consumption by a Prometheus time series database server.
+```
+docker run -p 8888:8888 \
+  -e TYPESENSE_HOST=typesense.example.com \
+  -e TYPESENSE_API_KEY=your-admin-key \
+  imatefx/typesense-prometheus-exporter
+curl localhost:8888/metrics
+```
 
 ## Docker Deployment
 
@@ -80,6 +105,37 @@ typesense-prometheus-exporter [OPTIONS] --typesense-host <TYPESENSE_HOST> --type
 
 - `-h, --help`: Display help.
 - `-V, --version`: Display version.
+
+## Metrics
+
+All metrics are gauges labelled with `host` and `port` (the Typesense node being scraped).
+
+| Metric | Extra labels | Source | Description |
+|---|---|---|---|
+| `typesense_health` | | `/health` | 1 if the node reports `{"ok": true}`, otherwise 0 (including unreachable) |
+| `typesense_raft_state` | | `/debug` | 1 = leader, 4 = follower, 0 = other or unreachable |
+| `typesense_metrics` | `key` | `/metrics.json` | System and Typesense memory metrics, e.g. `key="system_memory_used_bytes"`, `key="system_cpu3_active_percentage"` |
+| `typesense_stats` | `key` | `/stats.json` | Totals such as `search_latency_ms`, `write_requests_per_second`, `pending_write_batches`, `cache_hit_ratio` |
+| `typesense_stats_latency_ms` | `key` | `/stats.json` | Latency per endpoint, e.g. `key="GET /collections/products/documents/search"` |
+| `typesense_stats_requests_per_second` | `key` | `/stats.json` | Requests per second per endpoint |
+| `typesense_stats_latency_ms_by_collection` | `key`, `method`, `collection_name`, `action` | `/stats.json` | Per-endpoint latency for collection endpoints |
+| `typesense_stats_requests_per_second_by_collection` | `key`, `method`, `collection_name`, `action` | `/stats.json` | Per-endpoint requests per second for collection endpoints |
+
+The API key needs access to `/metrics.json`, `/stats.json` and `/debug`. An admin key works; `/health` needs no key.
+
+### Prometheus
+
+Run one exporter per Typesense node and scrape them all:
+
+```yaml
+scrape_configs:
+  - job_name: typesense-exporter
+    scrape_timeout: 10s   # keep above the exporter's TYPESENSE_TIMEOUT (default 5s)
+    static_configs:
+      - targets: ["exporter-1:8888", "exporter-2:8888", "exporter-3:8888"]
+```
+
+Ready-made alert rules (exporter down, unhealthy node, no raft leader) are in [`deploy/prometheus/alerts.yml`](deploy/prometheus/alerts.yml). Grafana dashboards are in [`grafana/`](grafana): import them and pick your Prometheus data source.
 
 ## Local stack (Docker Compose)
 
@@ -135,3 +191,7 @@ Thanks to everyone who has contributed to this exporter:
 | [weriomat](https://github.com/weriomat) | Optional CPU metrics for hosts that don't report them ([#11](https://github.com/imatefx/typesense-prometheus-exporter/pull/11)) |
 | [Sebastian Caldarola (scaldarola)](https://github.com/scaldarola) | Proposed scraping multiple Typesense hosts from one exporter ([#14](https://github.com/imatefx/typesense-prometheus-exporter/pull/14)) |
 | [cyppe](https://github.com/cyppe) | Per-core CPU metrics for any core count, swap memory and cache hit ratio ([#15](https://github.com/imatefx/typesense-prometheus-exporter/pull/15)) |
+
+## License
+
+[MIT](LICENSE)

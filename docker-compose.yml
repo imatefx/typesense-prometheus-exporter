@@ -7,7 +7,7 @@
 # Typesense: http://localhost:8108, :8109, :8110
 
 x-typesense: &typesense
-  image: typesense/typesense:27.1
+  image: typesense/typesense:30.1
   command:
     - --data-dir=/data
     - --api-key=${TYPESENSE_API_KEY:-local-dev-key}

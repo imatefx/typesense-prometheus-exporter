@@ -31,7 +31,9 @@ while ((SECONDS < end)); do
     for _ in $(seq 1 $((RANDOM % 15 + 5))); do
         c=$([[ $((RANDOM % 3)) == 0 ]] && echo articles || echo products)
         node=${NODES[RANDOM % 3]}
-        ts "$node/collections/$c/documents/search?q=${words[RANDOM % 14]}&query_by=title" &
+        # Half the searches opt into Typesense's search cache so cache_hit_ratio moves.
+        cache=$([[ $((RANDOM % 2)) == 0 ]] && echo "&use_cache=true" || echo "")
+        ts "$node/collections/$c/documents/search?q=${words[RANDOM % 14]}&query_by=title$cache" &
     done
     ((i % 10 == 0)) && ts -X DELETE "$TS/collections/products/documents?filter_by=n:<$((RANDOM * 50))" || true
     wait

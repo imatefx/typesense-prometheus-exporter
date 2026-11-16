@@ -163,7 +163,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_stats{key=\"total_requests_per_second\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -256,7 +256,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_stats{key=\"write_requests_per_second\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -349,7 +349,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_stats{key=\"search_requests_per_second\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -442,7 +442,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_stats{key=\"import_requests_per_second\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -535,7 +535,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_stats{key=\"delete_requests_per_second\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -628,7 +628,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_stats{key=\"overloaded_requests_per_second\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -702,7 +702,7 @@
               }
             ]
           },
-          "unit": "dtdurationms"
+          "unit": "ms"
         },
         "overrides": []
       },
@@ -733,7 +733,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_stats{key=\"import_latency_ms\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -794,7 +794,7 @@
               }
             ]
           },
-          "unit": "dtdurationms"
+          "unit": "ms"
         },
         "overrides": []
       },
@@ -825,7 +825,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_stats{key=\"search_latency_ms\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -886,7 +886,7 @@
               }
             ]
           },
-          "unit": "dtdurationms"
+          "unit": "ms"
         },
         "overrides": []
       },
@@ -917,7 +917,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_stats{key=\"write_latency_ms\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -978,7 +978,7 @@
               }
             ]
           },
-          "unit": "dtdurationms"
+          "unit": "ms"
         },
         "overrides": []
       },
@@ -1009,7 +1009,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_stats{key=\"delete_latency_ms\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -1107,7 +1107,7 @@
           "editorMode": "code",
           "expr": "typesense_health",
           "interval": "",
-          "legendFormat": "{{host}}:{{port}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -1195,7 +1195,7 @@
           "editorMode": "code",
           "expr": "typesense_raft_state",
           "interval": "",
-          "legendFormat": "{{host}}:{{port}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -1254,7 +1254,9 @@
               }
             ]
           },
-          "unit": "percentunit"
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
         },
         "overrides": []
       },
@@ -1286,7 +1288,7 @@
           "editorMode": "code",
           "expr": "typesense_stats{key=\"cache_hit_ratio\"}",
           "interval": "",
-          "legendFormat": "{{host}}:{{port}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "cache_hit_ratio"
         }

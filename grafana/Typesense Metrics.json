@@ -125,7 +125,8 @@
                 "value": 80
               }
             ]
-          }
+          },
+          "unit": "percent"
         },
         "overrides": []
       },
@@ -138,9 +139,12 @@
       "id": 2,
       "options": {
         "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
           "showLegend": true
         },
         "tooltip": {
@@ -157,7 +161,7 @@
           "editorMode": "code",
           "expr": "typesense_metrics{key=\"system_cpu_active_percentage\"}",
           "interval": "",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}} · all cores",
           "range": true,
           "refId": "all_cores"
         },
@@ -167,9 +171,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_metrics{key=~\"system_cpu[0-9]+_active_percentage\"}",
+          "expr": "label_replace(typesense_metrics{key=~\"system_cpu[0-9]+_active_percentage\"}, \"core\", \"$1\", \"key\", \"system_cpu([0-9]+)_active_percentage\")",
           "interval": "",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}} · core {{core}}",
           "range": true,
           "refId": "per_core"
         }
@@ -264,7 +268,7 @@
           "editorMode": "builder",
           "expr": "typesense_metrics{key=\"system_disk_total_bytes\"}",
           "format": "time_series",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}} · disk total",
           "range": true,
           "refId": "A"
         },
@@ -276,7 +280,7 @@
           "editorMode": "builder",
           "expr": "typesense_metrics{key=\"system_disk_used_bytes\"}",
           "hide": false,
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}} · disk used",
           "range": true,
           "refId": "B"
         }
@@ -369,7 +373,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_metrics{key=\"system_memory_total_bytes\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}} · memory total",
           "range": true,
           "refId": "A"
         },
@@ -381,7 +385,7 @@
           "editorMode": "builder",
           "expr": "typesense_metrics{key=\"system_memory_used_bytes\"}",
           "hide": false,
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}} · memory used",
           "range": true,
           "refId": "B"
         }
@@ -474,7 +478,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_metrics{key=\"system_network_received_bytes\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -567,7 +571,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_metrics{key=\"system_network_sent_bytes\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -661,7 +665,7 @@
           "editorMode": "code",
           "expr": "typesense_metrics{key=\"system_memory_total_swap_bytes\"}",
           "interval": "",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}} · memory total swap",
           "range": true,
           "refId": "system_memory_total_swap_bytes"
         },
@@ -673,7 +677,7 @@
           "editorMode": "code",
           "expr": "typesense_metrics{key=\"system_memory_used_swap_bytes\"}",
           "interval": "",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}} · memory used swap",
           "range": true,
           "refId": "system_memory_used_swap_bytes"
         }
@@ -775,7 +779,7 @@
               },
               "editorMode": "builder",
               "expr": "typesense_metrics{key=\"typesense_memory_active_bytes\"}",
-              "legendFormat": "{{key}}",
+              "legendFormat": "{{host}}",
               "range": true,
               "refId": "A"
             }
@@ -867,7 +871,7 @@
               },
               "editorMode": "builder",
               "expr": "typesense_metrics{key=\"typesense_memory_metadata_bytes\"}",
-              "legendFormat": "{{key}}",
+              "legendFormat": "{{host}}",
               "range": true,
               "refId": "A"
             }
@@ -959,7 +963,7 @@
               },
               "editorMode": "builder",
               "expr": "typesense_metrics{key=\"typesense_memory_fragmentation_ratio\"}",
-              "legendFormat": "{{key}}",
+              "legendFormat": "{{host}}",
               "range": true,
               "refId": "A"
             }
@@ -1051,7 +1055,7 @@
               },
               "editorMode": "builder",
               "expr": "typesense_metrics{key=\"typesense_memory_mapped_bytes\"}",
-              "legendFormat": "{{key}}",
+              "legendFormat": "{{host}}",
               "range": true,
               "refId": "A"
             }
@@ -1143,7 +1147,7 @@
               },
               "editorMode": "builder",
               "expr": "typesense_metrics{key=\"typesense_memory_retained_bytes\"}",
-              "legendFormat": "{{key}}",
+              "legendFormat": "{{host}}",
               "range": true,
               "refId": "A"
             }
@@ -1235,7 +1239,7 @@
               },
               "editorMode": "builder",
               "expr": "typesense_metrics{key=\"typesense_memory_resident_bytes\"}",
-              "legendFormat": "{{key}}",
+              "legendFormat": "{{host}}",
               "range": true,
               "refId": "A"
             }
@@ -1327,7 +1331,7 @@
               },
               "editorMode": "builder",
               "expr": "typesense_metrics{key=\"typesense_memory_allocated_bytes\"}",
-              "legendFormat": "{{key}}",
+              "legendFormat": "{{host}}",
               "range": true,
               "refId": "A"
             }

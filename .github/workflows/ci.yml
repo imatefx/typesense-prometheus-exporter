@@ -22,6 +22,8 @@ jobs:
   test:
     name: unit + integration tests, coverage
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # publish the coverage badge to the badges branch
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -36,6 +38,21 @@ jobs:
         with:
           name: coverage-lcov
           path: lcov.info
+      - name: Publish coverage badge
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          pct=$(cargo llvm-cov report --json --summary-only | jq '.data[0].totals.lines.percent | floor')
+          color=$( ((pct >= 90)) && echo brightgreen || { ((pct >= 75)) && echo yellow || echo red; } )
+          mkdir -p badge && cd badge
+          printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' "$pct" "$color" > coverage.json
+          git init -q -b badges
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add coverage.json
+          git commit -q -m "coverage: ${pct}%"
+          git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" badges
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   e2e:
     name: end-to-end (docker compose)

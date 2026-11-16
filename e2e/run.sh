@@ -114,6 +114,13 @@ searched_on_node() {
 for n in "${NODES[@]}"; do
     eventually 60 "exporter-$n reports search traffic served by typesense-$n" searched_on_node "$n"
 done
+cached_searches() {
+    for _ in 1 2 3 4 5; do
+        ts "$(ts_url 1)/collections/products/documents/search?q=boots&query_by=title&use_cache=true" >/dev/null
+    done
+    curl -sf "$(exporter_url 1)/metrics" | grep -qE '^typesense_stats\{.*key="cache_hit_ratio".*\} 0\.[0-9]*[1-9]'
+}
+eventually 60 "cached searches show up as a non-zero cache_hit_ratio" cached_searches
 
 echo "==> Prometheus and Grafana"
 eventually 30 "alert rules loaded" sh -c "curl -sf $PROM/api/v1/rules | jq -e '[.data.groups[].rules[].name] | contains([\"TypesenseUnhealthy\",\"TypesenseNoLeader\",\"TypesenseExporterDown\"])'"
