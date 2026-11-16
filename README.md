@@ -63,6 +63,29 @@ docker run -d -p 8888:8888 \
 curl -s localhost:8888/metrics | grep -E '^typesense_(health|raft_state)'
 ```
 
+Then scrape it from Prometheus. The exporter serves `/metrics`, the Prometheus default, so a single node needs only its address:
+
+```yaml
+scrape_configs:
+  - job_name: typesense-exporter
+    scrape_timeout: 10s   # must be above TYPESENSE_TIMEOUT (5s by default)
+    static_configs:
+      - targets: [exporter-1.internal:8888]
+```
+
+For a cluster with one exporter next to each node, list every exporter:
+
+```yaml
+scrape_configs:
+  - job_name: typesense-exporter
+    scrape_timeout: 10s
+    static_configs:
+      - targets:
+          - exporter-1.internal:8888   # exporter for typesense-1
+          - exporter-2.internal:8888   # exporter for typesense-2
+          - exporter-3.internal:8888   # exporter for typesense-3
+```
+
 **One exporter for a whole cluster.** Leave out `TYPESENSE_HOST`, list the nodes the exporter may probe, and let Prometheus pass each node as a target, like `blackbox_exporter`:
 
 ```bash
@@ -74,6 +97,23 @@ docker run -d -p 8888:8888 \
 curl -s 'localhost:8888/probe?target=ts-1.internal' | grep -E '^typesense_(health|raft_state)'
 ```
 
+Prometheus scrapes the exporter once per node and passes the node as `target`. Spelled out, each node is one entry: the address is the exporter, `__param_target` becomes `?target=`, and `instance` names the node:
+
+```yaml
+scrape_configs:
+  - job_name: typesense-exporter
+    metrics_path: /probe
+    static_configs:
+      - targets: [exporter.internal:8888]   # the exporter
+        labels: {__param_target: ts-1.internal:8108, instance: ts-1.internal:8108}
+      - targets: [exporter.internal:8888]
+        labels: {__param_target: ts-2.internal:8108, instance: ts-2.internal:8108}
+      - targets: [exporter.internal:8888]
+        labels: {__param_target: ts-3.internal:8108, instance: ts-3.internal:8108}
+```
+
+The same scrape config, shorter as the cluster grows: list only the nodes, and let relabeling fill in the rest. This is the usual `blackbox_exporter` pattern, and it also works with service discovery instead of `static_configs`:
+
 ```yaml
 scrape_configs:
   - job_name: typesense-exporter
@@ -81,19 +121,19 @@ scrape_configs:
     static_configs:
       - targets: [ts-1.internal:8108, ts-2.internal:8108, ts-3.internal:8108]
     relabel_configs:
-      - source_labels: [__address__]
-        target_label: __param_target
+      - source_labels: [__address__]    # the node...
+        target_label: __param_target    # ...becomes ?target=<node>
       - source_labels: [__param_target]
-        target_label: instance
+        target_label: instance          # instance names the node, not the exporter
       - target_label: __address__
-        replacement: exporter.internal:8888
+        replacement: exporter.internal:8888   # every scrape goes to the exporter
 ```
 
 **Several clusters with different keys.** Put everything in one TOML file, with a `[clusters.<name>]` per cluster (`targets`, `api_key_file` or `api_key_env`, optional `protocol`), and start with `typesense-prometheus-exporter --config exporter.toml`. `/probe` uses a cluster's key only for that cluster's nodes. See [the config file](docs/configuration.md#config-file), [several clusters](docs/configuration.md#several-clusters-with-different-keys) and [deploy/exporter.example.toml](deploy/exporter.example.toml).
 
 The exporter only probes the listed nodes, because it sends its API key to every node it scrapes. See [configuration](docs/configuration.md#probing-several-nodes-from-one-exporter).
 
-Then add the exporter(s) to Prometheus, and import the [dashboards](grafana/) and [alert rules](deploy/prometheus/alerts.yml). The [getting started guide](docs/getting-started.md) walks through it.
+Then import the [dashboards](grafana/) and [alert rules](deploy/prometheus/alerts.yml). The [getting started guide](docs/getting-started.md) walks through it.
 
 ## Configuration
 

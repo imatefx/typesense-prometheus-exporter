@@ -95,7 +95,21 @@ docker run -d --name typesense-exporter -p 8888:8888 \
   imatefx/typesense-prometheus-exporter:v1.1.0
 ```
 
-Prometheus lists the nodes and passes each one to `/probe`, like `blackbox_exporter`:
+Prometheus scrapes the exporter once per node and passes the node as `target`. Spelled out for two nodes, each entry's address is the exporter, `__param_target` becomes `?target=`, and `instance` names the node:
+
+```yaml
+scrape_configs:
+  - job_name: typesense-exporter
+    metrics_path: /probe
+    scrape_timeout: 10s   # must be above TYPESENSE_TIMEOUT (5s by default)
+    static_configs:
+      - targets: [exporter.internal:8888]
+        labels: {__param_target: typesense-1.internal:8108, instance: typesense-1.internal:8108}
+      - targets: [exporter.internal:8888]
+        labels: {__param_target: typesense-2.internal:8108, instance: typesense-2.internal:8108}
+```
+
+With more nodes, or with service discovery, list only the nodes and let relabeling build the same scrapes, like `blackbox_exporter`:
 
 ```yaml
 scrape_configs:
