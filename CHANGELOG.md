@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-16
+
 ### Added
 - **`GET /exporter/metrics`: the exporter's own health**, in Prometheus text format, on its own endpoint so it never mixes into a node's output and is the same with `/metrics` and `/probe` (like the `/metrics` of `blackbox_exporter` itself). Scrape it as a separate job (`metrics_path: /exporter/metrics`); the Docker Compose stack's `prometheus.yml` has one. The output of `/metrics` and `/probe` is unchanged. The series live as long as the process, carry no `host` or `port`, and never take a label value from a request: a refused or malformed `/probe` target is only counted. See [Exporter metrics](docs/metrics.md#exporter-metrics).
   - `typesense_exporter_build_info{version}`
@@ -222,7 +224,8 @@ dashboards, a local stack and a full test suite. Metric names and labels from
 ### Added
 - First release: exports Typesense `/metrics.json` and `/stats.json` in Prometheus format.
 
-[Unreleased]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v1.0.0...v1.1.0

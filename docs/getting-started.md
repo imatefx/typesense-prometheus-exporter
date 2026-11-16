@@ -47,7 +47,7 @@ Each node reports its own health, raft role and the traffic it served, so Promet
 docker run -d --name typesense-exporter -p 8888:8888 \
   -e TYPESENSE_HOST=typesense-1.internal \
   -e TYPESENSE_API_KEY=<admin-api-key> \
-  imatefx/typesense-prometheus-exporter:v1.3.0
+  imatefx/typesense-prometheus-exporter:v1.4.0
 ```
 
 Or the binary. Build it with `cargo build --release`, or use the static Linux builds from `./build-cross.sh`.
@@ -75,7 +75,7 @@ docker run -d --name typesense-exporter -p 8888:8888 \
   -v /etc/typesense-exporter/api-key:/run/secrets/typesense/api-key:ro \
   -e TYPESENSE_HOST=typesense-1.internal \
   -e TYPESENSE_API_KEY_FILE=/run/secrets/typesense/api-key \
-  imatefx/typesense-prometheus-exporter:v1.3.0
+  imatefx/typesense-prometheus-exporter:v1.4.0
 ```
 
 **Or use a config file.** Every option can go in a TOML file, and flags and environment variables still override it. Keys are never written inline, only as a key file or an environment variable name. Start from [`deploy/exporter.example.toml`](../deploy/exporter.example.toml), which lists every option with its default:
@@ -117,7 +117,7 @@ Instead of one exporter per node, run a single exporter without `--typesense-hos
 docker run -d --name typesense-exporter -p 8888:8888 \
   -e TYPESENSE_PROBE_ALLOWED_TARGETS=typesense-1.internal,typesense-2.internal,typesense-3.internal \
   -e TYPESENSE_API_KEY=<admin-api-key> \
-  imatefx/typesense-prometheus-exporter:v1.3.0
+  imatefx/typesense-prometheus-exporter:v1.4.0
 ```
 
 Prometheus scrapes the exporter once per node and passes the node as `target`. Spelled out for two nodes, each entry's address is the exporter, `__param_target` becomes `?target=`, and `instance` names the node:
