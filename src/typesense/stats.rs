@@ -15,7 +15,7 @@ pub async fn get_typesense_stats(args: Arc<CliArgs>) -> Result<TypesenseStats, E
 
     let res = client
         .get(url)
-        .header("X-TYPESENSE-API-KEY", format!("{}", args.typesense_api_key))
+        .header("X-TYPESENSE-API-KEY", args.typesense_api_key.to_string())
         .send()
         .await
         .unwrap();

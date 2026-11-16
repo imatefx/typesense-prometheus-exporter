@@ -65,12 +65,10 @@ async fn metrics_route_handler(State(args): State<Arc<CliArgs>>) -> String {
     )
     .await;
 
-    let promdata = prometheus_exp::generate_metrics(
+    prometheus_exp::generate_metrics(
         metrics_data.unwrap().clone(),
         stats_data.unwrap().clone(),
         args.clone(),
     )
-    .await;
-
-    return promdata;
+    .await
 }

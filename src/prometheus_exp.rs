@@ -403,9 +403,7 @@ pub(crate) async fn generate_metrics(
     let mut buffer = Vec::new();
     encoder.encode(&metric_families, &mut buffer).unwrap();
 
-    let metric_line = String::from_utf8(buffer).unwrap();
-
-    return metric_line;
+    String::from_utf8(buffer).unwrap()
 }
 
 fn parse_collection_action_line(input: &str) -> Option<(String, String, String)> {
