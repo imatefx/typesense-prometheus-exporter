@@ -83,14 +83,18 @@ typesense-prometheus-exporter [OPTIONS] --typesense-host <TYPESENSE_HOST> --type
 
 ## Local stack (Docker Compose)
 
-`docker compose up -d --build` starts Typesense, the exporter, Prometheus and Grafana:
+`docker compose up -d --build` starts a 3-node Typesense cluster with one exporter per node, plus Prometheus and Grafana. Run one exporter per Typesense node in production too: each node reports its own health, raft role and traffic.
 
 | Service | URL |
 |---|---|
 | Grafana (dashboards provisioned) | http://localhost:3000 (admin / admin) |
 | Prometheus (with alert rules) | http://localhost:9090 |
-| Exporter | http://localhost:8888/metrics |
-| Typesense | http://localhost:8108 (API key `local-dev-key`) |
+| Exporters | http://localhost:8888/metrics, :8889, :8890 (nodes 1–3) |
+| Typesense nodes | http://localhost:8108, :8109, :8110 (API key `local-dev-key`) |
+
+`scripts/traffic.sh [seconds]` generates search and write traffic across the cluster so the dashboards have something to show.
+
+Set `TYPESENSE_TIMEOUT` below Prometheus' `scrape_timeout`. The stack uses 2s against 4s. Otherwise a hung node makes the whole scrape time out, and you get `TypesenseExporterDown` instead of `TypesenseUnhealthy`.
 
 Override the defaults with `TYPESENSE_API_KEY` and `GRAFANA_ADMIN_PASSWORD`. Prometheus alert rules live in `deploy/prometheus/alerts.yml`:
 - `TypesenseExporterDown`: the exporter can't be scraped.
@@ -103,7 +107,7 @@ Override the defaults with `TYPESENSE_API_KEY` and `GRAFANA_ADMIN_PASSWORD`. Pro
 |---|---|
 | `make test-unit` | Unit tests (models, metric rendering, CLI) |
 | `make test-integration` | The exporter served over HTTP against a mock Typesense (healthy, follower, down, 401, timeout, malformed responses) |
-| `make e2e` | Starts the compose stack, sends real Typesense traffic, and checks the exporter, Prometheus, alerts and Grafana, including Typesense going down and recovering |
+| `make e2e` | Starts the 3-node cluster stack and checks, end to end:<br>• cluster formation, with one leader and two followers<br>• per-node traffic reaching the exporters, Prometheus and Grafana<br>• leader failover<br>• a hung node, and quorum loss firing `TypesenseNoLeader`<br>• recovery |
 | `make coverage` | Unit + integration coverage via [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) (fails under 90% of lines) |
 
 CI (`.github/workflows/ci.yml`) runs lint, tests with coverage, and the e2e suite on every pull request.

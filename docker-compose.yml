@@ -1,33 +1,67 @@
-# Local monitoring stack: Typesense -> exporter -> Prometheus -> Grafana.
+# Local monitoring stack: a 3-node Typesense cluster, one exporter per node,
+# Prometheus (with alert rules) and Grafana (with the dashboards provisioned).
 #   docker compose up -d --build
 # Grafana: http://localhost:3000 (admin / ${GRAFANA_ADMIN_PASSWORD:-admin})
-# Prometheus: http://localhost:9090   Exporter: http://localhost:8888/metrics
+# Prometheus: http://localhost:9090
+# Exporters: http://localhost:8888/metrics, :8889, :8890 (one per node)
+# Typesense: http://localhost:8108, :8109, :8110
 
-x-api-key: &api-key ${TYPESENSE_API_KEY:-local-dev-key}
+x-typesense: &typesense
+  image: typesense/typesense:27.1
+  command:
+    - --data-dir=/data
+    - --api-key=${TYPESENSE_API_KEY:-local-dev-key}
+    - --nodes=/etc/typesense/nodes
+    - --enable-cors
+  volumes:
+    - ./deploy/typesense/nodes:/etc/typesense/nodes:ro
+  healthcheck:
+    # /health only reports ok once the node has joined a cluster with a leader.
+    test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8108 && printf 'GET /health HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q '\"ok\":true' <&3"]
+    interval: 5s
+    timeout: 3s
+    retries: 30
+
+x-exporter: &exporter
+  build: .
+  image: typesense-prometheus-exporter:local
+  environment: &exporter-env
+    TYPESENSE_PORT: "8108"
+    TYPESENSE_API_KEY: ${TYPESENSE_API_KEY:-local-dev-key}
+    TYPESENSE_TIMEOUT: "2"
 
 services:
-  typesense:
-    image: typesense/typesense:27.1
-    command: ["--data-dir=/data", "--api-key=${TYPESENSE_API_KEY:-local-dev-key}", "--enable-cors"]
+  typesense-1:
+    <<: *typesense
+    hostname: typesense-1
     ports: ["8108:8108"]
-    volumes: [typesense-data:/data]
-    healthcheck:
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8108 && printf 'GET /health HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q '\"ok\":true' <&3"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
+    volumes: [./deploy/typesense/nodes:/etc/typesense/nodes:ro, typesense-1-data:/data]
+  typesense-2:
+    <<: *typesense
+    hostname: typesense-2
+    ports: ["8109:8108"]
+    volumes: [./deploy/typesense/nodes:/etc/typesense/nodes:ro, typesense-2-data:/data]
+  typesense-3:
+    <<: *typesense
+    hostname: typesense-3
+    ports: ["8110:8108"]
+    volumes: [./deploy/typesense/nodes:/etc/typesense/nodes:ro, typesense-3-data:/data]
 
-  exporter:
-    build: .
-    image: typesense-prometheus-exporter:local
-    environment:
-      TYPESENSE_HOST: typesense
-      TYPESENSE_PORT: "8108"
-      TYPESENSE_API_KEY: *api-key
-      TYPESENSE_TIMEOUT: "5"
+  exporter-1:
+    <<: *exporter
+    environment: { <<: *exporter-env, TYPESENSE_HOST: typesense-1 }
     ports: ["8888:8888"]
-    depends_on:
-      typesense: { condition: service_healthy }
+    depends_on: { typesense-1: { condition: service_healthy } }
+  exporter-2:
+    <<: *exporter
+    environment: { <<: *exporter-env, TYPESENSE_HOST: typesense-2 }
+    ports: ["8889:8888"]
+    depends_on: { typesense-2: { condition: service_healthy } }
+  exporter-3:
+    <<: *exporter
+    environment: { <<: *exporter-env, TYPESENSE_HOST: typesense-3 }
+    ports: ["8890:8888"]
+    depends_on: { typesense-3: { condition: service_healthy } }
 
   prometheus:
     image: prom/prometheus:v2.54.1
@@ -35,7 +69,7 @@ services:
     ports: ["9090:9090"]
     volumes:
       - ./deploy/prometheus:/etc/prometheus:ro
-    depends_on: [exporter]
+    depends_on: [exporter-1, exporter-2, exporter-3]
 
   # Grafana provisioning does not resolve the ${DS_PROMETHEUS} import input in
   # the shared dashboards, so copy them with the datasource uid filled in.
@@ -60,5 +94,7 @@ services:
       grafana-dashboards: { condition: service_completed_successfully }
 
 volumes:
-  typesense-data:
+  typesense-1-data:
+  typesense-2-data:
+  typesense-3-data:
   grafana-dashboards:
