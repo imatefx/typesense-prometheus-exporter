@@ -7,10 +7,11 @@ Every option can be set as a command-line flag or as an environment variable. Th
 | Flag | Environment variable | Default | Description |
 |---|---|---|---|
 | `--typesense-host` | `TYPESENSE_HOST` | *(required)* | Hostname or IP of the Typesense node. Also used as the `host` label on every metric. |
-| `--typesense-api-key` | `TYPESENSE_API_KEY` | *(required)* | API key sent as `X-TYPESENSE-API-KEY`. See [API key permissions](#api-key-permissions). |
+| `--typesense-api-key` | `TYPESENSE_API_KEY` | *(one of the two is required)* | API key sent as `X-TYPESENSE-API-KEY`. Never printed: hidden in `--help` and redacted in debug output. See [API key permissions](#api-key-permissions). |
+| `--typesense-api-key-file` | `TYPESENSE_API_KEY_FILE` | | File holding the API key, e.g. a Docker or Kubernetes secret; surrounding whitespace is ignored. Preferred over the flag, which other users can see in the process list. |
 | `--typesense-port` | `TYPESENSE_PORT` | `8108` | Typesense API port. Also the `port` label. |
 | `--typesense-protocol` | `TYPESENSE_PROTOCOL` | `http` | `http` or `https`. HTTPS uses rustls with the bundled CA certificates. |
-| `--typesense-timeout` | `TYPESENSE_TIMEOUT` | `5` | Seconds allowed for each Typesense request. `0` or less disables the timeout. See [Timeouts](#timeouts). |
+| `--typesense-timeout` | `TYPESENSE_TIMEOUT` | `5` | Seconds allowed for each Typesense request; `0` disables the timeout. See [Timeouts](#timeouts). |
 | `--exporter-bind-address` | `EXPORTER_BIND_ADDRESS` | `0.0.0.0` | Address the exporter listens on. |
 | `--exporter-bind-port` | `EXPORTER_BIND_PORT` | `8888` | Port the exporter listens on. |
 
@@ -46,7 +47,9 @@ curl -X POST "$TYPESENSE/keys" -H "X-TYPESENSE-API-KEY: $ADMIN_KEY" -d '{
 }'
 ```
 
-A missing action only drops the metrics from that endpoint; the exporter logs the 401 and exports the rest.
+A missing action only drops the metrics from that endpoint. The exporter logs the 401, reports `typesense_scrape_success{endpoint=...} 0` for it, and exports the rest.
+
+**Use HTTPS when Typesense is on another machine.** With `--typesense-protocol http` and a non-local host, the exporter logs a warning at startup, because the API key would travel unencrypted.
 
 ## Timeouts
 
@@ -72,7 +75,7 @@ Each scrape calls the six Typesense endpoints concurrently, and each one succeed
 | `/status` or `/collections` fails (e.g. older Typesense, missing key action) | Those metrics are left out |
 | Typesense leaves a field out (e.g. latency percentiles on older versions) | That metric is left out |
 
-Every failure is logged at `WARN` with the endpoint and the reason.
+Every failure is logged at `WARN` with the endpoint and the reason, and shows up as `typesense_scrape_success{endpoint=...} 0`. A value Typesense reports that isn't a number is left out, not exported as 0.
 
 ## Prometheus
 
@@ -97,6 +100,9 @@ rule_files:
 | `TypesenseExporterDown` | `up{job="typesense-exporter"} == 0` | 1m |
 | `TypesenseUnhealthy` | `typesense_health == 0` | 1m |
 | `TypesenseNoLeader` | `max(typesense_raft_state == bool 1) == 0` | 1m |
+| `TypesenseScrapeFailing` | `typesense_scrape_success{endpoint!="/health"} == 0 unless on (host, port) typesense_health == 0` | 5m |
+
+`TypesenseScrapeFailing` catches a healthy node whose endpoint the exporter can't read: usually the API key lacks an action, or the Typesense version lacks the endpoint. It stays quiet while the node is down, which `TypesenseUnhealthy` already covers.
 
 The `for: 1m` matters for `TypesenseNoLeader`. A normal leader election leaves the cluster without a leader for a few seconds, and the alert should not fire for that. The e2e suite checks that it doesn't.
 
