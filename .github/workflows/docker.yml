@@ -39,8 +39,21 @@ env:
   IMAGE_NAME: imatefx/typesense-prometheus-exporter
 
 jobs:
+  # Never publish an image from a commit whose tests fail.
+  test:
+    name: Tests before publishing
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --locked
+
   push_to_registry:
     name: Build and push Docker image
+    needs: test
+    # Runs after a passing test job, or on pull requests where it is skipped.
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
