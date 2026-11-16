@@ -60,7 +60,46 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
-  "links": [],
+  "links": [
+    {
+      "title": "Documentation",
+      "type": "link",
+      "url": "https://stalin-pereira.com/typesense-prometheus-exporter/",
+      "icon": "doc",
+      "targetBlank": true,
+      "asDropdown": false,
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "tooltip": "typesense-prometheus-exporter documentation"
+    },
+    {
+      "title": "GitHub",
+      "type": "link",
+      "url": "https://github.com/imatefx/typesense-prometheus-exporter",
+      "icon": "external link",
+      "targetBlank": true,
+      "asDropdown": false,
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "tooltip": "Exporter source, releases and issues"
+    },
+    {
+      "title": "Typesense dashboards",
+      "type": "dashboards",
+      "tags": [
+        "typesense"
+      ],
+      "asDropdown": true,
+      "includeVars": true,
+      "keepTime": true,
+      "icon": "external link",
+      "targetBlank": false,
+      "tooltip": "",
+      "url": ""
+    }
+  ],
   "liveNow": false,
   "panels": [
     {
@@ -1200,6 +1239,8 @@
   "schemaVersion": 37,
   "style": "dark",
   "tags": [
+    "prometheus",
+    "search",
     "typesense"
   ],
   "templating": {
@@ -1246,5 +1287,6 @@
   "title": "Typesense Cluster Overview",
   "uid": "typesense-overview",
   "version": 1,
-  "weekStart": ""
+  "weekStart": "",
+  "description": "Health, raft leader, versions, replication lag, documents, search rate and latency for every node of a Typesense cluster. Uses typesense-prometheus-exporter 1.x."
 }
