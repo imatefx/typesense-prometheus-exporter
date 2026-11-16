@@ -1,4 +1,4 @@
-FROM docker.io/library/rust:1.88-alpine AS builder
+FROM docker.io/library/rust:1.100-alpine AS builder
 # musl-dev provides the C toolchain needed by rustls' crypto backend.
 RUN apk add --no-cache musl-dev
 
