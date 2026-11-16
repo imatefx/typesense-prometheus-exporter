@@ -28,6 +28,11 @@
 # probe_allowed_targets = ["typesense-1", "typesense-2:8108"]
 # probe_max_concurrency = 16     # at least 1
 
+# Logging. RUST_LOG, when set, overrides log_level. "debug" prints one line
+# per Typesense request (endpoint, host:port, status, milliseconds).
+# log_level = "info"             # "error", "warn", "info", "debug" or "trace"
+# log_format = "text"            # "text" or "json"
+
 # Clusters with their own API key (uncomment to use). /probe?target=<node> finds the cluster
 # that lists the node and uses that cluster's key and protocol, so a key can
 # only reach its own nodes. List nodes the way Prometheus targets them

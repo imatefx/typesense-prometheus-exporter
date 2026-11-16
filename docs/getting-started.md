@@ -165,4 +165,8 @@ Check it with `curl -s 'localhost:8888/probe?target=typesense-1.internal' | grep
 
 In Grafana, go to **Dashboards → New → Import** and upload each file from [`grafana/`](../grafana). Pick your Prometheus data source when asked.
 
+### Troubleshooting
+
+If `/metrics` is slow, empty or hangs, set `TYPESENSE_EXPORTER_LOG_LEVEL=debug` (or `--log-level debug`) and read the log: it shows one line per Typesense request with the endpoint, status and time taken, and says when a request timed out. Raise `TYPESENSE_TIMEOUT` if the node is only slow. See [logging](configuration.md#logging).
+
 Next: [configuration](configuration.md) for every option, and [metrics](metrics.md) for what each metric means.

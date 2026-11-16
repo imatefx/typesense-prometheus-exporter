@@ -22,6 +22,8 @@ exporter_bind_port = 8888             # default 8888
 metric_names = "v1"                   # default "v1"; "both" or "legacy"
 probe_allowed_targets = ["ts-1", "ts-2:8108"]   # default empty
 probe_max_concurrency = 16            # default 16
+log_level = "info"                    # default "info"; error, warn, info, debug or trace
+log_format = "text"                   # default "text"; or "json"
 
 [clusters.prod]                       # see "Several clusters with different keys"
 targets = ["ts-prod-1:8108"]
@@ -57,8 +59,10 @@ Every option can be set as a command-line flag, an environment variable or a [co
 | `--metric-names` | `TYPESENSE_METRIC_NAMES` | `v1` | Which metric names to export: `v1`, `both` or `legacy`. See [Metric names](#metric-names). |
 | `--probe-allowed-targets` | `TYPESENSE_PROBE_ALLOWED_TARGETS` | *(empty)* | Comma-separated `host[:port]` nodes that `/probe` may scrape, or `*` for any. See [Probing several nodes](#probing-several-nodes-from-one-exporter). |
 | `--probe-max-concurrency` | `TYPESENSE_PROBE_MAX_CONCURRENCY` | `16` | Most `/probe` scrapes running at once (minimum 1). Further probes wait for a free slot rather than fail. Each scrape makes six requests to its node, so this caps the load anyone who can reach the exporter can put on your nodes. |
+| `--log-level` | `TYPESENSE_EXPORTER_LOG_LEVEL` | `info` | `error`, `warn`, `info`, `debug` or `trace`. `RUST_LOG`, when set, takes precedence. See [Logging](#logging). |
+| `--log-format` | `TYPESENSE_EXPORTER_LOG_FORMAT` | `text` | `text` or `json` (one JSON object per line). See [Logging](#logging). |
 
-`typesense-prometheus-exporter --help` prints the same list. Logs go to stdout at `INFO` level, and failed Typesense calls are logged at `WARN`.
+`typesense-prometheus-exporter --help` prints the same list. Logs go to stdout; see [Logging](#logging).
 
 ## Metric names
 
@@ -189,6 +193,43 @@ A missing action only drops the metrics from that endpoint. The exporter logs th
 
 **Use HTTPS when Typesense is on another machine.** With `--typesense-protocol http` and a non-local host (`--typesense-host`, or any non-local host in `--probe-allowed-targets`), the exporter logs a warning at startup, because the API key would travel unencrypted.
 
+## Logging
+
+Logs go to stdout. At the default `info` level the exporter prints its settings at startup and a `warn` line for every failed Typesense call.
+
+| Level | Shows |
+|---|---|
+| `error` | Errors only |
+| `warn` | Failed Typesense requests (with the reason), plaintext key and deprecation warnings |
+| `info` (default) | Also startup: version, bind address, metric names, timeout, and what is served (the `/metrics` node, the `/probe` allow list, each cluster with its node count) |
+| `debug` | Also one line per Typesense request: endpoint, target `host:port`, HTTP status and duration in milliseconds (or the error when no response came), and a summary line per scrape |
+| `trace` | Same as `debug` for this exporter; combine with `RUST_LOG` to see HTTP client internals |
+
+```
+DEBUG typesense_prometheus_exporter::typesense: typesense request endpoint=/health target=ts-1:8108 status=200 elapsed_ms=12
+```
+
+`--log-level` applies to this exporter only; the HTTP libraries it uses stay at `warn`. **`RUST_LOG`**, when set and not empty, replaces `--log-level` and accepts full [`tracing-subscriber` filter directives](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#directives), for example:
+
+```bash
+RUST_LOG=typesense_prometheus_exporter=debug,reqwest=info    # our debug lines plus reqwest's info
+RUST_LOG=debug,hyper_util=trace                              # everything at debug, connection details at trace
+```
+
+Precedence for the level: `RUST_LOG`, then `--log-level`, then `TYPESENSE_EXPORTER_LOG_LEVEL`, then `log_level` in the config file, then `info`. An invalid `RUST_LOG` stops the exporter at startup with an error; an invalid `--log-level` or `--log-format` is rejected like any other option. Logging starts once the options are loaded (the level can come from the config file), so errors found while reading them are printed as plain messages.
+
+Text logs are coloured only when stdout is a terminal and `NO_COLOR` isn't set, so `docker logs`, Kubernetes and log collectors get plain text.
+
+`--log-format json` writes one object per line, for log collectors:
+
+```json
+{"timestamp":"2026-11-16T10:57:32.769Z","level":"DEBUG","fields":{"message":"typesense request","endpoint":"/health","target":"ts-1:8108","status":200,"elapsed_ms":12},"target":"typesense_prometheus_exporter::typesense"}
+```
+
+The API key is never logged at any level, including `trace` and `RUST_LOG=trace`; a test checks this.
+
+**When `/metrics` is slow or hangs** (for example against Typesense Cloud), set `TYPESENSE_EXPORTER_LOG_LEVEL=debug`. The per-request lines show which endpoint is slow and how long it took, and a request that never answers is logged as a timeout; see [Timeouts](#timeouts).
+
 ## Timeouts
 
 Keep `TYPESENSE_TIMEOUT` **below** Prometheus' `scrape_timeout`.
@@ -199,6 +240,8 @@ The exporter waits for Typesense before answering Prometheus. If a node hangs an
 |---|---|---|
 | Defaults | 5s | 10s (Prometheus default) |
 | Bundled Docker Compose stack | 2s | 4s (5s scrape interval) |
+
+A request that hits the limit is logged at `warn` as `timed out after Ns`, naming `TYPESENSE_TIMEOUT`. With `TYPESENSE_EXPORTER_LOG_LEVEL=debug` the per-request lines show how long every other endpoint took, which tells a slow node from a slow network.
 
 ## Failure behaviour
 

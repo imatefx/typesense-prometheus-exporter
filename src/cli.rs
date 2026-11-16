@@ -6,7 +6,13 @@ use std::{
 use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
 use serde::Deserialize;
 
-use crate::{config, key::KeySource, probe_config::ProbeConfig, target};
+use crate::{
+    config,
+    key::KeySource,
+    logging::{LogFormat, LogLevel},
+    probe_config::ProbeConfig,
+    target,
+};
 
 /// Which metric names the exporter emits. See `docs/metrics-v1.md`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum, Deserialize)]
@@ -107,6 +113,16 @@ pub struct CliArgs {
     /// unauthenticated caller can put on the allowed nodes.
     #[arg(long, env = "TYPESENSE_PROBE_MAX_CONCURRENCY", default_value_t = 16, value_parser = clap::value_parser!(u32).range(1..))]
     pub probe_max_concurrency: u32,
+
+    /// How much to log: `error`, `warn`, `info`, `debug` (one line per
+    /// Typesense request) or `trace`. The `RUST_LOG` environment variable, when
+    /// set, takes precedence and accepts per-module directives.
+    #[arg(long, env = "TYPESENSE_EXPORTER_LOG_LEVEL", value_enum, default_value_t = LogLevel::Info)]
+    pub log_level: LogLevel,
+
+    /// Log line format: `text` or `json` (one object per line).
+    #[arg(long, env = "TYPESENSE_EXPORTER_LOG_FORMAT", value_enum, default_value_t = LogFormat::Text)]
+    pub log_format: LogFormat,
 
     /// Clusters from the config file, with their keys read.
     #[arg(skip)]
@@ -238,6 +254,8 @@ impl fmt::Debug for CliArgs {
             .field("metric_names", &self.metric_names)
             .field("probe_allowed_targets", &self.probe_allowed_targets)
             .field("probe_max_concurrency", &self.probe_max_concurrency)
+            .field("log_level", &self.log_level)
+            .field("log_format", &self.log_format)
             .field("config", &self.config)
             .field("clusters", &self.clusters)
             .finish()
@@ -275,6 +293,8 @@ mod tests {
         assert_eq!(args.exporter_bind_port, 8888);
         assert_eq!(args.typesense_timeout, 5);
         assert_eq!(args.metric_names, MetricNames::V1);
+        assert_eq!(args.log_level, LogLevel::Info);
+        assert_eq!(args.log_format, LogFormat::Text);
         assert_eq!(args.api_key().unwrap(), "key");
     }
 
@@ -504,5 +524,49 @@ mod tests {
             arg.get_env().and_then(|e| e.to_str()),
             Some("TYPESENSE_METRIC_NAMES")
         );
+    }
+
+    #[test]
+    fn parses_log_level_and_format_and_rejects_anything_else() {
+        let base = ["--typesense-host=ts", "--typesense-api-key=k"];
+        let with = |extra: &str| parse(&[base[0], base[1], extra]);
+        for (value, expected) in [
+            ("error", LogLevel::Error),
+            ("warn", LogLevel::Warn),
+            ("info", LogLevel::Info),
+            ("debug", LogLevel::Debug),
+            ("trace", LogLevel::Trace),
+        ] {
+            let args = with(&format!("--log-level={value}")).unwrap();
+            assert_eq!(args.log_level, expected, "{value}");
+        }
+        assert_eq!(
+            with("--log-format=json").unwrap().log_format,
+            LogFormat::Json
+        );
+        assert_eq!(
+            with("--log-format=text").unwrap().log_format,
+            LogFormat::Text
+        );
+
+        let e = with("--log-level=verbose").unwrap_err().to_string();
+        assert!(e.contains("verbose") && e.contains("debug"), "{e}");
+        let e = with("--log-format=xml").unwrap_err().to_string();
+        assert!(e.contains("xml") && e.contains("json"), "{e}");
+    }
+
+    #[test]
+    fn log_options_read_their_environment_variables() {
+        for (id, var) in [
+            ("log_level", "TYPESENSE_EXPORTER_LOG_LEVEL"),
+            ("log_format", "TYPESENSE_EXPORTER_LOG_FORMAT"),
+        ] {
+            let arg = CliArgs::command()
+                .get_arguments()
+                .find(|a| a.get_id() == id)
+                .unwrap()
+                .clone();
+            assert_eq!(arg.get_env().and_then(|e| e.to_str()), Some(var));
+        }
     }
 }

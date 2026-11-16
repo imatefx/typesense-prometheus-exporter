@@ -42,6 +42,8 @@ struct AppState {
     default_scheme: String,
     default_port: u16,
     metric_names: MetricNames,
+    /// `--typesense-timeout`, for log messages.
+    timeout: u64,
     /// Probe targets already warned about for a plaintext API key.
     plaintext_warned: Mutex<HashSet<(String, u16)>>,
     /// Bounds concurrent /probe scrapes (`--probe-max-concurrency`).
@@ -144,6 +146,7 @@ pub fn router(args: &CliArgs) -> std::io::Result<Router> {
         default_scheme: args.typesense_protocol.clone(),
         default_port: args.typesense_port,
         metric_names: args.metric_names,
+        timeout: args.typesense_timeout,
         plaintext_warned: Mutex::default(),
         probe_slots: tokio::sync::Semaphore::new(args.probe_max_concurrency as usize),
     });
@@ -159,13 +162,13 @@ pub fn router(args: &CliArgs) -> std::io::Result<Router> {
 pub async fn run(args: CliArgs) -> std::io::Result<()> {
     let bind_address = format!("{}:{}", args.exporter_bind_address, args.exporter_bind_port);
     let listener = tokio::net::TcpListener::bind(&bind_address).await?;
-    tracing::info!("exporter listening on {bind_address}");
     serve(listener, args).await
 }
 
 /// Serve on an already-bound listener until SIGINT/SIGTERM.
 pub async fn serve(listener: tokio::net::TcpListener, args: CliArgs) -> std::io::Result<()> {
     let app = router(&args)?;
+    log_startup(&args, listener.local_addr()?);
     if let (true, Some(host)) = (args.sends_key_in_plaintext(), &args.typesense_host) {
         tracing::warn!(
             "sending the Typesense API key over unencrypted http to {host}; use --typesense-protocol https"
@@ -191,6 +194,52 @@ pub async fn serve(listener: tokio::net::TcpListener, args: CliArgs) -> std::io:
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
+}
+
+/// What the exporter was started with, for the first lines of the log. Never
+/// includes an API key.
+fn log_startup(args: &CliArgs, bind: std::net::SocketAddr) {
+    fn name<T: clap::ValueEnum>(value: T) -> String {
+        value
+            .to_possible_value()
+            .map_or_else(String::new, |v| v.get_name().to_string())
+    }
+    let timeout = match args.typesense_timeout {
+        0 => "disabled".to_string(),
+        secs => format!("{secs}s"),
+    };
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        bind = %bind,
+        metric_names = %name(args.metric_names),
+        timeout = %timeout,
+        "exporter listening on {bind}"
+    );
+    if let Some(host) = &args.typesense_host {
+        tracing::info!(
+            "/metrics scrapes {}://{}:{}",
+            args.typesense_protocol,
+            host,
+            args.typesense_port
+        );
+    }
+    let allowed: Vec<&str> = args
+        .probe_allowed_targets
+        .iter()
+        .map(|t| t.trim())
+        .filter(|t| !t.is_empty())
+        .collect();
+    if !allowed.is_empty() {
+        tracing::info!("/probe allows {}", allowed.join(", "));
+    }
+    for cluster in &args.clusters.clusters {
+        tracing::info!(
+            "/probe cluster {}: {} node(s) over {}",
+            cluster.name,
+            cluster.nodes.len(),
+            cluster.protocol
+        );
+    }
 }
 
 async fn shutdown_signal() {
@@ -235,6 +284,7 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> (StatusCode, Str
                 &node.host,
                 node.port,
                 state.metric_names,
+                state.timeout,
             )
             .await,
         ),
@@ -339,7 +389,14 @@ async fn probe_handler(
     let client = TypesenseClient::new(state.http.clone(), target.base_url(), api_key.current());
     (
         StatusCode::OK,
-        scrape(&client, &target.host, target.port, state.metric_names).await,
+        scrape(
+            &client,
+            &target.host,
+            target.port,
+            state.metric_names,
+            state.timeout,
+        )
+        .await,
     )
 }
 
@@ -352,6 +409,7 @@ async fn scrape(
     host: &str,
     port: u16,
     metric_names: MetricNames,
+    timeout: u64,
 ) -> String {
     let started = Instant::now();
     let (metrics, stats, health, debug, status, collections) = tokio::join!(
@@ -366,19 +424,25 @@ async fn scrape(
 
     let mut endpoints = Vec::with_capacity(6);
     let mut ok = |endpoint: &'static str, succeeded: bool| endpoints.push((endpoint, succeeded));
-    let metrics = log_failure(host, port, "/metrics.json", metrics);
+    let metrics = log_failure(host, port, "/metrics.json", timeout, metrics);
     ok("/metrics.json", metrics.is_some());
-    let stats = log_failure(host, port, "/stats.json", stats);
+    let stats = log_failure(host, port, "/stats.json", timeout, stats);
     ok("/stats.json", stats.is_some());
-    let health = log_failure(host, port, "/health", health);
+    let health = log_failure(host, port, "/health", timeout, health);
     ok("/health", health.is_some());
-    let debug = log_failure(host, port, "/debug", debug);
+    let debug = log_failure(host, port, "/debug", timeout, debug);
     ok("/debug", debug.is_some());
-    let status = log_failure(host, port, "/status", status);
+    let status = log_failure(host, port, "/status", timeout, status);
     ok("/status", status.is_some());
-    let collections = log_failure(host, port, "/collections", collections);
+    let collections = log_failure(host, port, "/collections", timeout, collections);
     ok("/collections", collections.is_some());
 
+    tracing::debug!(
+        target = %format!("{host}:{port}"),
+        failed = endpoints.iter().filter(|(_, ok)| !ok).count(),
+        duration_ms = (scrape_duration * 1000.0) as u64,
+        "scrape finished"
+    );
     let scrape = Scrape {
         metrics,
         stats,
@@ -395,8 +459,24 @@ async fn scrape(
     prometheus_exp::generate_metrics(&scrape, host, port)
 }
 
-fn log_failure<T>(host: &str, port: u16, endpoint: &str, result: reqwest::Result<T>) -> Option<T> {
+fn log_failure<T>(
+    host: &str,
+    port: u16,
+    endpoint: &str,
+    timeout: u64,
+    result: reqwest::Result<T>,
+) -> Option<T> {
     result
-        .inspect_err(|err| tracing::warn!("typesense {host}:{port} {endpoint} failed: {err}"))
+        .inspect_err(|err| {
+            let is_timeout = err.is_timeout();
+            let err = crate::typesense::describe(err);
+            if is_timeout {
+                tracing::warn!(
+                    "typesense {host}:{port} {endpoint} timed out after {timeout}s: {err}; raise TYPESENSE_TIMEOUT (--typesense-timeout) if Typesense is only slow, and set TYPESENSE_EXPORTER_LOG_LEVEL=debug to see each request"
+                );
+            } else {
+                tracing::warn!("typesense {host}:{port} {endpoint} failed: {err}");
+            }
+        })
         .ok()
 }

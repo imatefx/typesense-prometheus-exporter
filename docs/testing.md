@@ -4,8 +4,8 @@ Three layers, from fast and isolated to slow and real:
 
 | Layer | Where | Runs against | Count | Time | Needs |
 |---|---|---|---|---|---|
-| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 98 | < 1s | Rust |
-| Integration | [`tests/exporter.rs`](../tests/exporter.rs), [`tests/config_env.rs`](../tests/config_env.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 60 | ~1s | Rust |
+| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 106 | < 1s | Rust |
+| Integration | [`tests/exporter.rs`](../tests/exporter.rs), [`tests/config_env.rs`](../tests/config_env.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 68 | ~1s | Rust |
 | End-to-end | [`tests/e2e.rs`](../tests/e2e.rs) | A real 3-node Typesense cluster, one exporter, Prometheus and Grafana in Docker | 9 | ~3–5 min | Rust, Docker |
 
 ```bash
@@ -87,6 +87,16 @@ The 1.0 names ([design](metrics-v1.md)) and the `--metric-names` modes:
 | `has_remote_ignores_loopback_entries` | Only non-loopback entries (or `*`) count as remote |
 | `lists_matches_exact_nodes_only` | `AllowList::lists` matches host (case-insensitive) and port, and `*` is not a listed node |
 
+### Logging: `src/logging.rs`
+
+| Test | Verifies |
+|---|---|
+| `each_level_shows_itself_and_everything_above_it_for_this_crate_only` | Each `--log-level` lets through its level and above from this crate; dependencies stay at `warn`; the default is `info` |
+| `colour_only_on_a_terminal_without_no_color` | ANSI colours only when stdout is a terminal and `NO_COLOR` is unset |
+| `rust_log_beats_the_log_level` | `RUST_LOG` directives replace `--log-level`, louder or quieter |
+| `a_blank_rust_log_is_ignored_and_a_bad_one_is_an_error` | Unset, empty or blank `RUST_LOG` falls back to the level; invalid directives are an error naming `RUST_LOG` |
+| `json_format_writes_one_object_per_line` | `--log-format json` gives one JSON object per line with level and message |
+
 ### Config file: `src/config.rs`
 
 | Test | Verifies |
@@ -101,6 +111,7 @@ The 1.0 names ([design](metrics-v1.md)) and the `--metric-names` modes:
 | `errors_never_contain_the_values_they_reject` | A secret-looking string in every typed field, a `*_env` setting and a protocol never appears in the error; an invalid variable name is reported without echoing it |
 | `the_protocol_is_validated_and_lowercased_from_every_source` | `ftp` from file, flag or no config is an error; `HTTPS`/`HTTP` are stored lowercase and clusters inherit it |
 | `the_example_file_loads_once_a_key_is_given` | `deploy/exporter.example.toml` loads as-is (clusters commented out) |
+| `log_options_follow_flag_then_file_then_default` | `log_level` and `log_format` from the file, a flag (even the default `info`) beating it, defaults without either |
 | `a_missing_config_file_is_an_error_and_no_file_changes_nothing` | A missing file names its path; without `--config` nothing changes |
 
 ### Clusters: `src/probe_config.rs`
@@ -163,6 +174,8 @@ The 1.0 names ([design](metrics-v1.md)) and the `--metric-names` modes:
 | `host_is_optional_with_an_allow_list` | `--typesense-host` can be left out when an allow list is set |
 | `config_reads_its_environment_variable` | `--config` is also read from `TYPESENSE_EXPORTER_CONFIG`; with only `--config`, host and key stay unset until merged |
 | `load_from_merges_the_file_and_reports_errors_as_clap_errors` | `CliArgs::load_from` fills in the file's values and turns config errors into a clap error; unknown flags still fail |
+| `parses_log_level_and_format_and_rejects_anything_else` | Every level and format is accepted; others are rejected naming the value and the choices |
+| `log_options_read_their_environment_variables` | `TYPESENSE_EXPORTER_LOG_LEVEL` and `TYPESENSE_EXPORTER_LOG_FORMAT` |
 | `flags_plaintext_keys_sent_by_probe` | Plain HTTP with `*` or a non-loopback allowed host is flagged; loopback, no allow list and HTTPS are not |
 
 ## Integration tests: `tests/exporter.rs`
@@ -233,10 +246,18 @@ The exporter runs with the default `--metric-names=v1` unless a test says otherw
 | `router_needs_the_default_key_for_a_host_or_allow_list` | Clusters plus `--typesense-host` or an allow list but no default key | `server::router` returns an error; clusters alone are fine |
 | `router_rejects_an_ipv6_host_spelled_differently_from_a_cluster_node` | `--typesense-host=0:0::1` and a cluster node `[::1]` | Startup error: one node, one key |
 | `router_rejects_an_empty_host_and_ignores_an_empty_key` | Empty `--typesense-host`; empty API key | `server::router` returns an error for each |
+| `debug_logs_one_line_per_typesense_request` | Debug capture of one scrape, one endpoint answering 503 | Six `typesense request` lines, each with the endpoint, `target=host:port`, status (200 or 503) and `elapsed_ms`, plus a `scrape finished` line |
+| `request_lines_are_hidden_at_the_default_level` | The same scrape at `info` | No request lines |
+| `a_failed_request_is_logged_with_its_error_at_debug` | Nothing listening, JSON logs | Six `typesense request failed` objects with the error, its cause and `elapsed_ms` |
+| `a_timeout_is_reported_with_the_limit_and_the_setting_to_change` | Every endpoint hangs, timeout 1s | A `warn` line saying `timed out after 1s` and naming `TYPESENSE_TIMEOUT` |
+| `startup_logs_the_mode_and_settings_but_never_the_key` | `serve` with a key file, an allow list, a `/metrics` scrape and two probes, captured at `trace` for every crate | Version, bind address, metric names, timeout, the `/metrics` node and the allow list are logged; the API key appears nowhere |
+| `startup_logs_each_cluster_with_its_node_count_and_no_key` | A cluster with two nodes and a key file, captured at `trace` | `cluster prod: 2 node(s)`; the cluster's key appears nowhere |
 | `every_blank_environment_variable_counts_as_unset` (`tests/config_env.rs`) | Every option's variable set to a blank value | The file's value for every option; without a file, the built-in defaults |
 | `empty_environment_variables_fall_back_to_the_file` (`tests/config_env.rs`) | Empty `TYPESENSE_HOST`, `TYPESENSE_PROBE_ALLOWED_TARGETS` and `TYPESENSE_API_KEY` | The file's host, list and key are used |
 | `an_environment_key_beats_the_files_key_settings` (`tests/config_env.rs`) | `TYPESENSE_API_KEY` with a file `typesense_api_key_file` or `_env` | The environment key is used |
 | `list_and_enum_options_follow_the_same_precedence` (`tests/config_env.rs`) | `TYPESENSE_PROBE_ALLOWED_TARGETS` and `TYPESENSE_METRIC_NAMES` against the file and flags | Flag > environment > file |
+| `log_options_follow_flag_then_environment_then_file_then_default` (`tests/config_env.rs`) | `TYPESENSE_EXPORTER_LOG_LEVEL` / `_FORMAT`, flags and the file; blank variables | Flag > environment > file > default; blank is ignored |
+| `invalid_log_values_are_rejected_with_a_clear_error` (`tests/config_env.rs`) | A bad level or format from the environment or the file | An error naming the value and the choices (file errors name the line and don't echo the value) |
 | `flag_beats_environment_beats_file_beats_default` (`tests/config_env.rs`) | Real environment variables, flags and a file | Flag > environment > file > default; `--config` read from `TYPESENSE_EXPORTER_CONFIG` |
 
 **Checking that the tests catch bugs.** The suite was checked by breaking the code on purpose (re-measured for 1.0.0):
@@ -307,7 +328,7 @@ Two more workflows check every pull request:
 - [`rust.yml`](../.github/workflows/rust.yml) builds the release binaries: Linux amd64 and arm64 (arm64 on a native `ubuntu-24.04-arm` runner), macOS amd64 and arm64, and Windows.
 - [`docker.yml`](../.github/workflows/docker.yml) builds the Docker image for amd64 and arm64, each on a native runner, without pushing. It runs when a pull request touches the Dockerfile, sources or the workflow.
 
-On a version tag, both workflows run `cargo test --locked` first, and publish nothing if it fails.
+On a version tag, both workflows first run a test job and publish nothing if it fails. The job checks that the tag is `v` plus the `Cargo.toml` version (`cargo metadata --no-deps`, compared with `GITHUB_REF_NAME`) and fails with a message naming both when they differ, so a release can't ship a binary or image that reports an older version (#5). The check only runs for tag refs, which includes running `docker.yml` manually and choosing a tag; on a branch nothing is published, so it is skipped. `cargo test --locked` then fails if `Cargo.lock` doesn't match `Cargo.toml`. To fix a failed check, bump the version (and `Cargo.lock`), merge, and re-create the tag.
 
 [Dependabot](../.github/dependabot.yml) opens grouped weekly updates for Rust crates, GitHub Actions and the Docker base image, so they go through all of the above. Actions are pinned to commit SHAs, and Dependabot keeps those current.
 

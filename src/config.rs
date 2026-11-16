@@ -14,6 +14,7 @@ use serde::Deserialize;
 
 use crate::{
     cli::{CliArgs, MetricNames},
+    logging::{LogFormat, LogLevel},
     probe_config::{ClusterFile, ProbeConfig},
 };
 
@@ -33,6 +34,8 @@ struct FileConfig {
     metric_names: Option<MetricNames>,
     probe_allowed_targets: Option<Vec<String>>,
     probe_max_concurrency: Option<u32>,
+    log_level: Option<LogLevel>,
+    log_format: Option<LogFormat>,
     #[serde(default)]
     clusters: BTreeMap<String, ClusterFile>,
 }
@@ -203,6 +206,8 @@ pub fn merge(
     take!(exporter_bind_port);
     take!(metric_names);
     take!(probe_allowed_targets);
+    take!(log_level);
+    take!(log_format);
     if unset("probe_max_concurrency") {
         if let Some(v) = file.probe_max_concurrency {
             if v == 0 {
@@ -327,6 +332,8 @@ mod tests {
             metric_names = "both"
             probe_allowed_targets = ["a:1", "b"]
             probe_max_concurrency = 3
+            log_level = "debug"
+            log_format = "json"
             [clusters.prod]
             targets = ["p1"]
             api_key_env = "PROD_KEY"
@@ -346,6 +353,8 @@ mod tests {
         assert_eq!(a.metric_names, MetricNames::Both);
         assert_eq!(a.probe_allowed_targets, ["a:1", "b"]);
         assert_eq!(a.probe_max_concurrency, 3);
+        assert_eq!(a.log_level, LogLevel::Debug);
+        assert_eq!(a.log_format, LogFormat::Json);
         let prod = &a.clusters.clusters[0];
         assert_eq!(
             (
@@ -384,8 +393,35 @@ mod tests {
             "an explicit default still wins"
         );
         assert_eq!(a.typesense_timeout, 7, "file beats the built-in default");
+        assert_eq!(a.log_level, LogLevel::Info, "no file value: the default");
         assert_eq!(a.exporter_bind_port, 1);
         assert_eq!(a.probe_allowed_targets, ["x"]);
+    }
+
+    #[test]
+    fn log_options_follow_flag_then_file_then_default() {
+        let toml = "log_level = \"debug\"\nlog_format = \"json\"";
+        let a = load(&[], toml, &[]).unwrap();
+        assert_eq!(
+            (a.log_level, a.log_format),
+            (LogLevel::Debug, LogFormat::Json)
+        );
+        let a = load(&["--log-level=warn", "--log-format=text"], toml, &[]).unwrap();
+        assert_eq!(
+            (a.log_level, a.log_format),
+            (LogLevel::Warn, LogFormat::Text)
+        );
+        let a = load(&["--log-level=info"], toml, &[]).unwrap();
+        assert_eq!(
+            a.log_level,
+            LogLevel::Info,
+            "an explicit default still wins"
+        );
+        let a = load(&[], "", &[]).unwrap();
+        assert_eq!(
+            (a.log_level, a.log_format),
+            (LogLevel::Info, LogFormat::Text)
+        );
     }
 
     #[test]
@@ -440,6 +476,9 @@ mod tests {
             "typesense_port = 99999",
             "metric_names = \"v2\"",
             "exporter_bind_port = -1",
+            "log_level = \"verbose\"",
+            "log_format = \"xml\"",
+            "log_level = 3",
             "probe_allowed_targets = [\"a\",\n1]",
         ] {
             let e = load(&[], toml, &[]).unwrap_err();
@@ -465,6 +504,8 @@ mod tests {
             format!("exporter_bind_port = \"{S}\""),
             format!("probe_max_concurrency = \"{S}\""),
             format!("metric_names = \"{S}\""),
+            format!("log_level = \"{S}\""),
+            format!("log_format = \"{S}\""),
             format!("typesense_protocol = \"{S}\""),
             format!("typesense_host = [\"{S}\"]"),
             format!("probe_allowed_targets = \"{S}\""),

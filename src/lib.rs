@@ -3,6 +3,7 @@
 pub mod cli;
 pub mod config;
 pub mod key;
+pub mod logging;
 pub mod probe_config;
 pub mod prometheus_exp;
 pub mod server;
