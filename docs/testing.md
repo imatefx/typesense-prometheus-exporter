@@ -4,7 +4,7 @@ Three layers, from fast and isolated to slow and real:
 
 | Layer | Where | Runs against | Count | Time | Needs |
 |---|---|---|---|---|---|
-| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 105 | < 1s | Rust |
+| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 106 | < 1s | Rust |
 | Integration | [`tests/exporter.rs`](../tests/exporter.rs), [`tests/config_env.rs`](../tests/config_env.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 68 | ~1s | Rust |
 | End-to-end | [`tests/e2e.rs`](../tests/e2e.rs) | A real 3-node Typesense cluster, one exporter, Prometheus and Grafana in Docker | 9 | ~3–5 min | Rust, Docker |
 
@@ -92,6 +92,7 @@ The 1.0 names ([design](metrics-v1.md)) and the `--metric-names` modes:
 | Test | Verifies |
 |---|---|
 | `each_level_shows_itself_and_everything_above_it_for_this_crate_only` | Each `--log-level` lets through its level and above from this crate; dependencies stay at `warn`; the default is `info` |
+| `colour_only_on_a_terminal_without_no_color` | ANSI colours only when stdout is a terminal and `NO_COLOR` is unset |
 | `rust_log_beats_the_log_level` | `RUST_LOG` directives replace `--log-level`, louder or quieter |
 | `a_blank_rust_log_is_ignored_and_a_bad_one_is_an_error` | Unset, empty or blank `RUST_LOG` falls back to the level; invalid directives are an error naming `RUST_LOG` |
 | `json_format_writes_one_object_per_line` | `--log-format json` gives one JSON object per line with level and message |

@@ -80,6 +80,12 @@ where
     }
 }
 
+/// Colours only on a terminal, and never with `NO_COLOR` set
+/// (<https://no-color.org>), so `docker logs` and log collectors get plain text.
+fn use_colour(stdout_is_terminal: bool, no_color: bool) -> bool {
+    stdout_is_terminal && !no_color
+}
+
 /// Install the global subscriber from the loaded options and `RUST_LOG`.
 /// Call after [`CliArgs::load`], since the level can come from the config file.
 pub fn init(args: &CliArgs) -> Result<(), String> {
@@ -88,7 +94,10 @@ pub fn init(args: &CliArgs) -> Result<(), String> {
         filter,
         args.log_format,
         std::io::stdout,
-        true,
+        use_colour(
+            std::io::IsTerminal::is_terminal(&std::io::stdout()),
+            std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()),
+        ),
     ))
     .map_err(|e| e.to_string())
 }
@@ -96,6 +105,13 @@ pub fn init(args: &CliArgs) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn colour_only_on_a_terminal_without_no_color() {
+        assert!(use_colour(true, false));
+        assert!(!use_colour(false, false), "piped output, e.g. docker logs");
+        assert!(!use_colour(true, true), "NO_COLOR set");
+    }
     use std::sync::{Arc, Mutex};
 
     #[derive(Clone, Default)]

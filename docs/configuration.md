@@ -218,6 +218,8 @@ RUST_LOG=debug,hyper_util=trace                              # everything at deb
 
 Precedence for the level: `RUST_LOG`, then `--log-level`, then `TYPESENSE_EXPORTER_LOG_LEVEL`, then `log_level` in the config file, then `info`. An invalid `RUST_LOG` stops the exporter at startup with an error; an invalid `--log-level` or `--log-format` is rejected like any other option. Logging starts once the options are loaded (the level can come from the config file), so errors found while reading them are printed as plain messages.
 
+Text logs are coloured only when stdout is a terminal and `NO_COLOR` isn't set, so `docker logs`, Kubernetes and log collectors get plain text.
+
 `--log-format json` writes one object per line, for log collectors:
 
 ```json

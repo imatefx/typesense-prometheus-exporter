@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 - **Log level and format** (#8). `--log-level` / `TYPESENSE_EXPORTER_LOG_LEVEL` / `log_level` takes `error`, `warn`, `info` (default), `debug` or `trace`; `--log-format` / `TYPESENSE_EXPORTER_LOG_FORMAT` / `log_format` takes `text` (default) or `json`. `RUST_LOG`, when set, takes precedence over the level and accepts full filter directives such as `typesense_prometheus_exporter=debug,reqwest=info`. Logging now starts after the options are loaded, so the level can come from the config file. See [Logging](docs/configuration.md#logging).
+- Text logs are coloured only on a terminal and never with `NO_COLOR` set, so `docker logs` and log collectors no longer get ANSI escape codes.
 - **Request logs.** At `debug`, one line per Typesense request with the endpoint, the target `host:port`, the HTTP status and the time in milliseconds (the error when there was no response), plus a summary per scrape. At `info`, startup now logs the version, bind address, metric names, timeout and what is served (the `/metrics` node, the `/probe` allow list, each cluster with its node count). The API key is never logged at any level; a test captures the logs at `trace` to check it.
 - A request that times out is logged at `warn` as `timed out after Ns`, naming `TYPESENSE_TIMEOUT`. Failed requests now include the underlying cause (for example `connection refused`).
 
