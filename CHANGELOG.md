@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-16
+
 ### Fixed
 - Docker images are published automatically again. The Docker workflow now runs on version tags, instead of on GitHub releases (which the release workflow creates in a way that doesn't trigger other workflows). Its build attestation step also failed for lack of the `id-token: write` permission.
 
@@ -109,7 +111,8 @@ dashboards, a local stack and a full test suite. Metric names and labels from
 ### Added
 - First release: exports Typesense `/metrics.json` and `/stats.json` in Prometheus format.
 
-[Unreleased]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.1.4...v0.1.5
