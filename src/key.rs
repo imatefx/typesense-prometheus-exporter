@@ -2,6 +2,8 @@
 //!
 //! Rotating a key (for example a Kubernetes Secret update) rewrites the file;
 //! polling its metadata on use avoids a restart without a file-watcher.
+//! The lock is only held to read or update the cached state, never across
+//! file system calls, so a hung mount can't block other callers.
 
 use std::{
     fmt,
@@ -13,8 +15,19 @@ use std::{
 /// How often a key file's metadata is looked at, at most.
 const CHECK_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Modified time and length: what tells a rewritten file from an unchanged one.
-type Signature = Option<(SystemTime, u64)>;
+/// What tells a rewritten file from an unchanged one: modified time and
+/// length, plus, on unix, the inode, device and change time, which also catch
+/// a rewrite that keeps the length and restores the mtime (`cp -p`, `rsync -t`)
+/// or a permission fix.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Sig {
+    modified: SystemTime,
+    len: u64,
+    #[cfg(unix)]
+    unix: (u64, u64, i64, i64),
+}
+
+type Signature = Option<Sig>;
 
 #[derive(Clone)]
 pub struct KeySource {
@@ -35,9 +48,12 @@ struct FileKey {
 
 struct FileState {
     key: String,
-    /// Signature of the file as last looked at, whether or not it was usable.
+    /// Signature of the file as last read successfully; a failed read leaves
+    /// it, so the next check tries again.
     signature: Signature,
     last_check: Instant,
+    /// A caller is looking at the file; others use the cached key meanwhile.
+    checking: bool,
     /// The last failure warned about, so a persistent one is logged once.
     warned: Option<String>,
 }
@@ -65,6 +81,7 @@ impl KeySource {
                     key,
                     signature,
                     last_check: Instant::now(),
+                    checking: false,
                     warned: None,
                 }),
             })),
@@ -83,18 +100,25 @@ impl KeySource {
 
 impl FileKey {
     fn current(&self) -> String {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if state.last_check.elapsed() < self.interval {
-            return state.key.clone();
-        }
-        state.last_check = Instant::now();
+        let seen = {
+            let mut state = self.lock();
+            if state.checking || state.last_check.elapsed() < self.interval {
+                return state.key.clone();
+            }
+            state.checking = true;
+            state.last_check = Instant::now();
+            state.signature.clone()
+        };
+        // Unlocked: the file system may be slow or hung.
         let now = signature(&self.path);
-        if now == state.signature {
-            return state.key.clone();
-        }
-        state.signature = now;
-        match crate::cli::read_key_file(&self.path) {
-            Ok(key) => {
+        let read = (now.is_none() || now != seen).then(|| crate::cli::read_key_file(&self.path));
+
+        let mut state = self.lock();
+        state.checking = false;
+        match read {
+            None => {}
+            Some(Ok(key)) => {
+                state.signature = now;
                 state.warned = None;
                 if key != state.key {
                     state.key = key;
@@ -104,7 +128,7 @@ impl FileKey {
                     );
                 }
             }
-            Err(err) => {
+            Some(Err(err)) => {
                 let message = err.to_string();
                 if state.warned.as_ref() != Some(&message) {
                     tracing::warn!(
@@ -117,12 +141,26 @@ impl FileKey {
         }
         state.key.clone()
     }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, FileState> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
 }
 
 /// Follows symlinks, as Kubernetes Secret volumes swap a `..data` link.
 fn signature(path: &Path) -> Signature {
     let meta = std::fs::metadata(path).ok()?;
-    Some((meta.modified().ok()?, meta.len()))
+    #[cfg(unix)]
+    let unix = {
+        use std::os::unix::fs::MetadataExt;
+        (meta.ino(), meta.dev(), meta.ctime(), meta.ctime_nsec())
+    };
+    Some(Sig {
+        modified: meta.modified().ok()?,
+        len: meta.len(),
+        #[cfg(unix)]
+        unix,
+    })
 }
 
 /// Never prints the key.
@@ -149,6 +187,13 @@ mod tests {
     fn warned(source: &KeySource) -> Option<String> {
         match &*source.inner {
             Inner::File(f) => f.state.lock().unwrap().warned.clone(),
+            Inner::Fixed(_) => None,
+        }
+    }
+
+    fn stored_signature(source: &KeySource) -> Signature {
+        match &*source.inner {
+            Inner::File(f) => f.state.lock().unwrap().signature.clone(),
             Inner::Fixed(_) => None,
         }
     }
@@ -194,13 +239,15 @@ mod tests {
     }
 
     #[test]
-    fn unchanged_metadata_is_not_re_read() {
+    fn a_rewrite_with_the_same_length_and_mtime_is_noticed_on_unix() {
         let d = dir("unchanged");
         let f = d.join("key");
         std::fs::write(&f, "aaaa").unwrap();
         let mtime = std::fs::metadata(&f).unwrap().modified().unwrap();
         let s = KeySource::file_with_interval(&f, Duration::ZERO).unwrap();
-        // Same length and mtime: the file is trusted not to have changed.
+        // Coarse change-time clocks need a moment between the two writes.
+        std::thread::sleep(Duration::from_millis(50));
+        // Same length and mtime, as `cp -p` or `rsync -t` leave it.
         std::fs::write(&f, "bbbb").unwrap();
         std::fs::File::options()
             .write(true)
@@ -208,7 +255,91 @@ mod tests {
             .unwrap()
             .set_modified(mtime)
             .unwrap();
-        assert_eq!(s.current(), "aaaa");
+        // The change time (unix only) tells the files apart; elsewhere the
+        // rewrite is invisible, as documented.
+        let expected = if cfg!(unix) { "bbbb" } else { "aaaa" };
+        assert_eq!(s.current(), expected);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_read_is_retried_so_a_permission_fix_takes_effect() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = dir("chmod");
+        let f = d.join("key");
+        std::fs::write(&f, "old").unwrap();
+        let s = KeySource::file_with_interval(&f, Duration::ZERO).unwrap();
+        let good = stored_signature(&s);
+        std::fs::write(&f, "new-key").unwrap();
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read(&f).is_ok() {
+            return; // root ignores permissions
+        }
+        assert_eq!(s.current(), "old");
+        assert_ne!(warned(&s), None);
+        assert_eq!(
+            stored_signature(&s),
+            good,
+            "a failed read is not remembered"
+        );
+        // Only the change time moves: the mtime and length stay as they were.
+        std::thread::sleep(Duration::from_millis(50));
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(s.current(), "new-key");
+        assert_eq!(warned(&s), None);
+    }
+
+    #[test]
+    fn a_key_that_is_not_a_header_value_is_rejected_without_naming_it() {
+        let d = dir("bom");
+        let f = d.join("key");
+        std::fs::write(&f, "\u{feff}secret-key").unwrap();
+        let err = KeySource::file(&f).unwrap_err().to_string();
+        assert!(err.contains("HTTP header"), "{err}");
+        assert!(err.contains(f.to_str().unwrap()), "{err}");
+        assert!(!err.contains("secret-key"), "{err}");
+        // On reload the previous key stays and the problem is warned about.
+        std::fs::write(&f, "good-key").unwrap();
+        let s = KeySource::file_with_interval(&f, Duration::ZERO).unwrap();
+        std::fs::write(&f, "\u{feff}secret-key-2").unwrap();
+        assert_eq!(s.current(), "good-key");
+        assert!(warned(&s).unwrap().contains("HTTP header"));
+        std::fs::write(&f, "bad\x01key-longer").unwrap();
+        assert_eq!(s.current(), "good-key");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_slow_file_system_does_not_block_other_callers() {
+        use std::{process::Command, sync::mpsc, thread};
+        let d = dir("fifo");
+        std::fs::write(d.join("key"), "old").unwrap();
+        let link = d.join("link");
+        std::os::unix::fs::symlink(d.join("key"), &link).unwrap();
+        let s = KeySource::file_with_interval(&link, Duration::ZERO).unwrap();
+        // Point the key at a FIFO: reading it blocks until someone writes.
+        let fifo = d.join("fifo");
+        assert!(Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success());
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(&fifo, &link).unwrap();
+
+        let slow = {
+            let s = s.clone();
+            thread::spawn(move || s.current())
+        };
+        thread::sleep(Duration::from_millis(300));
+        let (tx, rx) = mpsc::channel();
+        let s2 = s.clone();
+        thread::spawn(move || tx.send(s2.current()));
+        let other = rx.recv_timeout(Duration::from_secs(2));
+        // Unblock the reader whatever the outcome.
+        std::fs::write(&fifo, "fifo-key").unwrap();
+        assert_eq!(other.expect("blocked behind the slow read"), "old");
+        assert_eq!(slow.join().unwrap(), "fifo-key");
     }
 
     #[test]

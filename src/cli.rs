@@ -200,12 +200,20 @@ impl CliArgs {
     }
 }
 
-/// Read an API key file: surrounding whitespace is ignored, empty is an error.
+/// Read an API key file: surrounding whitespace is ignored; empty or not
+/// usable as an HTTP header value (a byte order mark, control characters,
+/// non-ASCII) is an error. Never includes the key in the error.
 pub fn read_key_file(path: &Path) -> std::io::Result<String> {
     let key = std::fs::read_to_string(path)?.trim().to_string();
     if key.is_empty() {
         return Err(std::io::Error::other(format!(
             "API key file {} is empty",
+            path.display()
+        )));
+    }
+    if !key.is_ascii() || reqwest::header::HeaderValue::from_str(&key).is_err() {
+        return Err(std::io::Error::other(format!(
+            "API key file {} has characters that are not valid in an HTTP header (a byte order mark, control or non-ASCII characters?)",
             path.display()
         )));
     }

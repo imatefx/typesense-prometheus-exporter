@@ -23,7 +23,8 @@ use crate::{
 
 /// The node `--typesense-host` names, served at `/metrics`.
 struct Node {
-    client: TypesenseClient,
+    base_url: String,
+    key: KeySource,
     host: String,
     port: u16,
 }
@@ -124,14 +125,11 @@ pub fn router(args: &CliArgs) -> std::io::Result<Router> {
         .map(|(host, key)| {
             allowed.allow(host, args.typesense_port);
             Node {
-                client: TypesenseClient::new(
-                    http.clone(),
-                    format!(
-                        "{}://{}:{}",
-                        args.typesense_protocol, host, args.typesense_port
-                    ),
-                    key.clone(),
+                base_url: format!(
+                    "{}://{}:{}",
+                    args.typesense_protocol, host, args.typesense_port
                 ),
+                key: key.clone(),
                 host: host.clone(),
                 port: args.typesense_port,
             }
@@ -228,7 +226,17 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> (StatusCode, Str
     match &state.node {
         Some(node) => (
             StatusCode::OK,
-            scrape(&node.client, &node.host, node.port, state.metric_names).await,
+            scrape(
+                &TypesenseClient::new(
+                    state.http.clone(),
+                    node.base_url.clone(),
+                    node.key.current(),
+                ),
+                &node.host,
+                node.port,
+                state.metric_names,
+            )
+            .await,
         ),
         None => (
             StatusCode::NOT_FOUND,
@@ -328,7 +336,7 @@ async fn probe_handler(
             "exporter shutting down\n".to_string(),
         );
     };
-    let client = TypesenseClient::new(state.http.clone(), target.base_url(), api_key);
+    let client = TypesenseClient::new(state.http.clone(), target.base_url(), api_key.current());
     (
         StatusCode::OK,
         scrape(&client, &target.host, target.port, state.metric_names).await,

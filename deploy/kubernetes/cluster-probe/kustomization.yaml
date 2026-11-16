@@ -4,7 +4,6 @@ kind: Kustomization
 # configmap.yaml and probe.yaml, where it is part of the node and prober names.
 namespace: typesense
 resources:
-  - secret.yaml
   - configmap.yaml
   - deployment.yaml
   - service.yaml

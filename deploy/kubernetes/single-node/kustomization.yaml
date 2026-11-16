@@ -3,7 +3,6 @@ kind: Kustomization
 # Placeholder: the namespace your Typesense runs in.
 namespace: typesense
 resources:
-  - secret.yaml
   - deployment.yaml
   - service.yaml
   - servicemonitor.yaml

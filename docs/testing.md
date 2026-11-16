@@ -121,7 +121,10 @@ The 1.0 names ([design](metrics-v1.md)) and the `--metric-names` modes:
 | `fixed_key_never_changes` | A flag or environment key is returned as is; `Debug` redacts it |
 | `changed_contents_give_the_new_key` | A rewritten key file gives the new key, trimmed |
 | `empty_or_missing_file_keeps_the_old_key_and_warns_once` | An empty or deleted file keeps the old key, records one warning per distinct problem, and a usable file afterwards takes effect and clears it |
-| `unchanged_metadata_is_not_re_read` | Same modified time and length: the file is not read again, so new contents are not picked up |
+| `a_rewrite_with_the_same_length_and_mtime_is_noticed_on_unix` | A same-length rewrite with the mtime restored (`cp -p`, `rsync -t`) is seen through the inode/change time on unix; elsewhere it is not (documented) |
+| `a_failed_read_is_retried_so_a_permission_fix_takes_effect` | An unreadable file keeps the old key and its signature is not remembered, so a later `chmod` (change time only) takes effect (unix only) |
+| `a_key_that_is_not_a_header_value_is_rejected_without_naming_it` | A BOM-prefixed or control-character key fails at startup and is ignored on reload; the error names the file, never the key |
+| `a_slow_file_system_does_not_block_other_callers` | While one caller is stuck reading the key file (a FIFO), another gets the cached key at once (unix only) |
 | `checks_at_most_once_per_interval` | Within the first second a change is not looked for |
 | `symlink_swap_like_a_kubernetes_secret_is_followed` | Swapping a `..data` symlink to a directory with a new key, with the same key length, is noticed (unix only) |
 | `startup_fails_on_an_unusable_file` | A missing or empty key file is an error at startup |
@@ -189,6 +192,7 @@ The exporter runs with the default `--metric-names=v1` unless a test says otherw
 | `document_ids_do_not_create_new_series` | 50 document IDs plus a search in `/stats.json` | Exactly 2 series: `documents/:id` (rates summed) and `documents/search`; no `key` label on the by-collection metrics |
 | `reads_the_api_key_from_a_file` | Key supplied with `TYPESENSE_API_KEY_FILE` | Requests carry the key from the file |
 | `a_rotated_key_file_is_used_by_the_next_scrape` | Scrape, rewrite the key file, scrape again after more than a second, then empty the file and scrape once more | The mock sees the first key, then the new key, then the new key again (an empty file keeps the last good key) |
+| `a_client_keeps_the_key_it_was_made_with_for_all_its_requests` | Make a client from the current key, rotate the file, send another request | Both requests carry the old key: a scrape never mixes keys |
 | `a_rotated_cluster_key_file_is_used_by_the_next_probe` | Same for a cluster's `api_key_file`, through `/probe` | The mock sees the old key, then the new one |
 | `startup_fails_without_a_readable_key_file` | Key file missing | `server::router` returns an error |
 | `run_fails_when_the_port_is_taken` | Bind port already in use | `run` returns `AddrInUse` instead of panicking |
@@ -296,7 +300,7 @@ If the local figure looks wrong (lines marked uncovered that are blank or commen
 | `audit` | `cargo audit -D warnings`: fails on any known vulnerability or warning in the dependency tree |
 | `test` | Unit and integration tests under `cargo llvm-cov` (90% minimum); uploads `lcov.info`; publishes the coverage badge on `main` |
 | `rules` | `promtool check rules` on the alert and recording rules, and `promtool test rules` on [`legacy-names.test.yml`](../deploy/prometheus/legacy-names.test.yml) |
-| `kubernetes` | [`scripts/validate-kubernetes.sh`](../scripts/validate-kubernetes.sh): renders both [`deploy/kubernetes`](../deploy/kubernetes) folders with kustomize and validates them with kubeconform, including the `ServiceMonitor` and `Probe` schemas |
+| `kubernetes` | [`scripts/validate-kubernetes.sh`](../scripts/validate-kubernetes.sh): renders both [`deploy/kubernetes`](../deploy/kubernetes) folders with kustomize and validates them (and each `secret.example.yaml`) with kubeconform, including the `ServiceMonitor` and `Probe` schemas (CRD schemas pinned to a commit) |
 | `e2e` | `cargo nextest run --features e2e --test e2e --profile ci`; uploads a JUnit report; prints exporter logs on failure; always tears the stack down |
 
 Two more workflows check every pull request:

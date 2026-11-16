@@ -1527,6 +1527,21 @@ async fn a_rotated_key_file_is_used_by_the_next_scrape() {
 }
 
 #[tokio::test]
+async fn a_client_keeps_the_key_it_was_made_with_for_all_its_requests() {
+    use typesense_prometheus_exporter::{key::KeySource, typesense::TypesenseClient};
+    let mock = key_recording_node().await;
+    let key_file = temp_file("scrape-key", "old-key\n");
+    let source = KeySource::file(&key_file).unwrap();
+    let client = TypesenseClient::new(reqwest::Client::new(), mock.uri(), source.current());
+    client.health().await.unwrap();
+    rotate(&key_file, "new-key-is-longer");
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert_eq!(source.current(), "new-key-is-longer");
+    client.health().await.unwrap();
+    assert_eq!(health_keys(&mock).await, ["old-key", "old-key"]);
+}
+
+#[tokio::test]
 async fn a_rotated_cluster_key_file_is_used_by_the_next_probe() {
     let mock = key_recording_node().await;
     let key_file = temp_file("cluster-rotating-key", "old-cluster-key\n");

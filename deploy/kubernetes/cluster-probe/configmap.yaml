@@ -8,8 +8,10 @@ data:
   exporter.toml: |
     typesense_timeout = 5
 
-    # The nodes of one Typesense cluster. These are the names Prometheus
-    # passes as ?target=, so the Probe resource must list them the same way.
+    # The nodes of one Typesense cluster. Prometheus passes these as ?target=,
+    # matched on host and port: a target without a port matches an entry with
+    # the default port (8108), but any other spelling of the host does not.
+    # List them in the Probe resource the same way.
     # For a StatefulSet "typesense" behind a headless Service "typesense" in
     # the namespace "typesense":
     [clusters.prod]
