@@ -95,7 +95,7 @@ jobs:
         run: cargo nextest run --features e2e --test e2e --profile ci
       - name: Exporter logs
         if: failure()
-        run: docker compose logs --tail 50 exporter-1 exporter-2 exporter-3
+        run: docker compose logs --tail 50 exporter
       - name: Tear down
         if: always()
         run: docker compose down -v

@@ -1,5 +1,5 @@
 //! End-to-end tests against the docker compose stack: a 3-node Typesense
-//! cluster, one exporter per node, Prometheus and Grafana.
+//! cluster, one exporter probing every node, Prometheus and Grafana.
 //!
 //! Run with `make e2e` (or `cargo test --features e2e --test e2e`, then
 //! `docker compose down -v`). The tests start the stack themselves and leave it
@@ -37,7 +37,7 @@ fn typesense_url(node: u8) -> String {
 }
 
 fn exporter_url(node: u8) -> String {
-    format!("http://localhost:{}", 8887 + u16::from(node))
+    format!("http://localhost:8888/probe?target=typesense-{node}")
 }
 
 // ---------------------------------------------------------------------------
@@ -145,7 +145,7 @@ fn parse_labels(s: &str) -> BTreeMap<String, String> {
 
 async fn scrape(node: u8) -> Result<Vec<Sample>, String> {
     let res = client()
-        .get(format!("{}/metrics", exporter_url(node)))
+        .get(exporter_url(node))
         .send()
         .await
         .map_err(|e| format!("exporter-{node}: {e}"))?;
@@ -921,6 +921,38 @@ async fn hung_node_and_quorum_loss_raise_no_leader() {
 
     drop(_restore);
     wait_for_healthy_cluster().await;
+}
+
+#[tokio::test]
+async fn probe_refuses_targets_outside_the_allow_list() {
+    let _stack = stack().await;
+    wait_for_healthy_cluster().await;
+
+    for target in [
+        "typesense-4",
+        "typesense-1:9999",
+        "example.com",
+        "http://169.254.169.254",
+    ] {
+        let res = client()
+            .get(format!("http://localhost:8888/probe?target={target}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status().as_u16(), 403, "{target}");
+    }
+    let res = client()
+        .get("http://localhost:8888/probe?target=typesense-1/metrics")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 400, "paths are malformed targets");
+    let res = client()
+        .get("http://localhost:8888/metrics")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 404, "no --typesense-host configured");
 }
 
 // ---------------------------------------------------------------------------

@@ -134,7 +134,9 @@ The four alert rules use only these, so they need no change.
 
 ## Several Typesense nodes from one exporter
 
-Today it's one exporter per node, which is why the compose stack runs three. 1.0 should allow one exporter to cover a whole cluster. That change is additive, so it can ship in 1.x, but the label decisions have to be right in 1.0.
+**Implemented in 1.1.0** as `/probe?target=<node>`. See [configuration](configuration.md#probing-several-nodes-from-one-exporter). Two details differ from the sketch below: the option is `--probe-allowed-targets` (`TYPESENSE_PROBE_ALLOWED_TARGETS`), and a target that isn't allowed gets a 403, with `--typesense-host:--typesense-port` always allowed. The compose stack now runs one exporter.
+
+Before 1.1.0 it was one exporter per node. One exporter can now cover a whole cluster. The change was additive, but the label decisions had to be right in 1.0.
 
 **Approach: the Prometheus multi-target pattern**, as used by `blackbox_exporter` and `snmp_exporter`:
 
@@ -142,7 +144,7 @@ Today it's one exporter per node, which is why the compose stack runs three. 1.0
 - Each node is a separate Prometheus scrape, so a hung node only times out its own scrape. `typesense_scrape_success`, `up` and `scrape_duration` stay per node, and the alerts work unchanged.
 - `/metrics` keeps working for the single node set with `--typesense-host`, so existing setups don't change.
 - One API key covers every node by default. Per-node keys can come later from a small config file, the way `blackbox_exporter` uses modules.
-- Optionally, `--allowed-targets` limits which hosts `/probe` will contact, so the exporter can't be used to reach arbitrary hosts.
+- `--probe-allowed-targets` limits which hosts `/probe` will contact, so the exporter can't be used to reach arbitrary hosts or to leak its API key.
 
 The alternative, `--typesense-host a,b,c` with every node in one `/metrics` response, is simpler. But the slowest node then delays the whole response, and one Prometheus `up` covers the whole cluster, so the per-node alerts get weaker. It's not recommended.
 

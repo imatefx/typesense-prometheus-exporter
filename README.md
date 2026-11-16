@@ -44,7 +44,7 @@
 
 ## Quick start
 
-**See it working in one command.** This starts a 3-node Typesense cluster, an exporter per node, and Prometheus and Grafana:
+**See it working in one command.** This starts a 3-node Typesense cluster, one exporter probing all three, and Prometheus and Grafana:
 
 ```bash
 docker compose up -d --build
@@ -52,24 +52,55 @@ docker compose up -d --build
 open http://localhost:3000        # Grafana: admin / admin
 ```
 
-**Monitor your own Typesense.** Run one exporter per node:
+**Monitor your own Typesense.** Run an exporter next to a node:
 
 ```bash
 docker run -d -p 8888:8888 \
   -e TYPESENSE_HOST=typesense-1.internal \
   -e TYPESENSE_API_KEY=<admin-api-key> \
-  imatefx/typesense-prometheus-exporter:v1.0.0
+  imatefx/typesense-prometheus-exporter:v1.1.0
 
 curl -s localhost:8888/metrics | grep -E '^typesense_(health|raft_state)'
 ```
 
-Then add the exporters to Prometheus, and import the [dashboards](grafana/) and [alert rules](deploy/prometheus/alerts.yml). The [getting started guide](docs/getting-started.md) walks through it.
+**One exporter for a whole cluster.** Leave out `TYPESENSE_HOST`, list the nodes the exporter may probe, and let Prometheus pass each node as a target, like `blackbox_exporter`:
+
+```bash
+docker run -d -p 8888:8888 \
+  -e TYPESENSE_PROBE_ALLOWED_TARGETS=ts-1.internal,ts-2.internal,ts-3.internal \
+  -e TYPESENSE_API_KEY=<admin-api-key> \
+  imatefx/typesense-prometheus-exporter:v1.1.0
+
+curl -s 'localhost:8888/probe?target=ts-1.internal' | grep -E '^typesense_(health|raft_state)'
+```
+
+```yaml
+scrape_configs:
+  - job_name: typesense-exporter
+    metrics_path: /probe
+    static_configs:
+      - targets: [ts-1.internal:8108, ts-2.internal:8108, ts-3.internal:8108]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: exporter.internal:8888
+```
+
+**Several clusters with different keys.** Put everything in one TOML file, with a `[clusters.<name>]` per cluster (`targets`, `api_key_file` or `api_key_env`, optional `protocol`), and start with `typesense-prometheus-exporter --config exporter.toml`. `/probe` uses a cluster's key only for that cluster's nodes. See [the config file](docs/configuration.md#config-file), [several clusters](docs/configuration.md#several-clusters-with-different-keys) and [deploy/exporter.example.toml](deploy/exporter.example.toml).
+
+The exporter only probes the listed nodes, because it sends its API key to every node it scrapes. See [configuration](docs/configuration.md#probing-several-nodes-from-one-exporter).
+
+Then add the exporter(s) to Prometheus, and import the [dashboards](grafana/) and [alert rules](deploy/prometheus/alerts.yml). The [getting started guide](docs/getting-started.md) walks through it.
 
 ## Configuration
 
 | Flag | Environment variable | Default |
 |---|---|---|
-| `--typesense-host` | `TYPESENSE_HOST` | *(required)* |
+| `--config` | `TYPESENSE_EXPORTER_CONFIG` | *(none)*: TOML file that can set every option below and define per-cluster API keys; see [configuration](docs/configuration.md#config-file) |
+| `--typesense-host` | `TYPESENSE_HOST` | *(required unless `--probe-allowed-targets` or config clusters are set)* |
 | `--typesense-api-key` / `--typesense-api-key-file` | `TYPESENSE_API_KEY` / `TYPESENSE_API_KEY_FILE` | *(one is required)* |
 | `--typesense-port` | `TYPESENSE_PORT` | `8108` |
 | `--typesense-protocol` | `TYPESENSE_PROTOCOL` | `http` |
@@ -77,6 +108,7 @@ Then add the exporters to Prometheus, and import the [dashboards](grafana/) and 
 | `--exporter-bind-address` | `EXPORTER_BIND_ADDRESS` | `0.0.0.0` |
 | `--exporter-bind-port` | `EXPORTER_BIND_PORT` | `8888` |
 | `--metric-names` | `TYPESENSE_METRIC_NAMES` | `v1` (`both` or `legacy` keep the 0.4 names; see [migrating](docs/migrating-to-1.0.md)) |
+| `--probe-allowed-targets` | `TYPESENSE_PROBE_ALLOWED_TARGETS` | *(empty)*: comma-separated `host[:port]` nodes `/probe?target=` may scrape, or `*` for any |
 
 See [configuration](docs/configuration.md) for API key permissions, timeouts, failure behaviour, Prometheus and Grafana setup.
 
@@ -105,7 +137,7 @@ See the [metrics reference](docs/metrics.md) for every family, with units and ex
 
 | Alert | Fires when |
 |---|---|
-| `TypesenseExporterDown` | Prometheus can't scrape an exporter for 1m |
+| `TypesenseExporterDown` | Prometheus can't scrape an exporter (or, with `/probe`, a probe through it) for 1m |
 | `TypesenseUnhealthy` | A node is unhealthy or unreachable for 1m |
 | `TypesenseNoLeader` | No node is raft leader for 1m. A normal election (a few seconds) doesn't trigger it. |
 | `TypesenseScrapeFailing` | A healthy node has an endpoint the exporter can't read for 5m (API key permissions, older Typesense) |
@@ -150,7 +182,7 @@ make up / down    # start / stop the Docker Compose stack
 ./build-cross.sh  # static linux/amd64 + linux/arm64 binaries
 ```
 
-There are 80 tests in three layers. **Unit** and **integration** tests run against a mock Typesense. **End-to-end** tests run against a real cluster and break it on purpose: leader failover, a hung node, quorum loss. See [testing](docs/testing.md) for the full list.
+There are 154 tests in three layers. **Unit** and **integration** tests run against a mock Typesense. **End-to-end** tests run against a real cluster and break it on purpose: leader failover, a hung node, quorum loss. See [testing](docs/testing.md) for the full list.
 
 ## Contributors
 

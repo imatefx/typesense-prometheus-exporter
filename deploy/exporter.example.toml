@@ -1,0 +1,42 @@
+# Example for `typesense-prometheus-exporter --config exporter.toml`
+# (or TYPESENSE_EXPORTER_CONFIG=exporter.toml).
+#
+# Every key is optional and commented out with its default. Precedence:
+# command-line flag > environment variable > this file > built-in default.
+# Unknown keys are errors. API keys are never written here: point to a
+# file or an environment variable instead.
+
+# Node served at /metrics. At least one of typesense_host,
+# probe_allowed_targets or a [clusters.*] table is required.
+# typesense_host = "localhost"
+# typesense_port = 8108          # also the default port for probe targets
+# typesense_protocol = "http"    # "http" or "https"; also the default for probe targets
+# typesense_timeout = 5          # seconds per Typesense request; 0 disables it
+
+# Default API key, used for typesense_host and probe_allowed_targets
+# (required with either). Use one of the two; both are overridden by
+# --typesense-api-key / TYPESENSE_API_KEY and --typesense-api-key-file.
+# typesense_api_key_file = "/run/secrets/typesense-api-key"
+# typesense_api_key_env = "TYPESENSE_API_KEY"
+
+# exporter_bind_address = "0.0.0.0"
+# exporter_bind_port = 8888
+# metric_names = "v1"            # "v1", "both" or "legacy"
+
+# Nodes /probe may scrape with the default key; "*" allows any.
+# probe_allowed_targets = ["typesense-1", "typesense-2:8108"]
+# probe_max_concurrency = 16     # at least 1
+
+# Clusters with their own API key (uncomment to use). /probe?target=<node> finds the cluster
+# that lists the node and uses that cluster's key and protocol, so a key can
+# only reach its own nodes. List nodes the way Prometheus targets them
+# (a different spelling, such as an IP address, matches no cluster). A node may be listed in one cluster only, and not
+# in probe_allowed_targets or typesense_host.
+# [clusters.prod]
+# targets = ["ts-prod-1:8108", "ts-prod-2:8108", "ts-prod-3:8108"]
+# api_key_file = "/run/secrets/typesense-prod"   # or api_key_env, exactly one
+# protocol = "https"                             # optional; default typesense_protocol
+
+# [clusters.staging]
+# targets = ["ts-staging-1:8108"]
+# api_key_env = "TYPESENSE_STAGING_KEY"
