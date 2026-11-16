@@ -179,7 +179,7 @@ make up / down    # start / stop the Docker Compose stack
 ./build-cross.sh  # static linux/amd64 + linux/arm64 binaries
 ```
 
-There are 80 tests in three layers. **Unit** and **integration** tests run against a mock Typesense. **End-to-end** tests run against a real cluster and break it on purpose: leader failover, a hung node, quorum loss. See [testing](docs/testing.md) for the full list.
+There are 117 tests in three layers. **Unit** and **integration** tests run against a mock Typesense. **End-to-end** tests run against a real cluster and break it on purpose: leader failover, a hung node, quorum loss. See [testing](docs/testing.md) for the full list.
 
 ## Contributors
 

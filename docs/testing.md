@@ -4,8 +4,8 @@ Three layers, from fast and isolated to slow and real:
 
 | Layer | Where | Runs against | Count | Time | Needs |
 |---|---|---|---|---|---|
-| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 67 | < 1s | Rust |
-| Integration | [`tests/exporter.rs`](../tests/exporter.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 37 | ~1s | Rust |
+| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 68 | < 1s | Rust |
+| Integration | [`tests/exporter.rs`](../tests/exporter.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 40 | ~1s | Rust |
 | End-to-end | [`tests/e2e.rs`](../tests/e2e.rs) | A real 3-node Typesense cluster, one exporter, Prometheus and Grafana in Docker | 9 | ~3–5 min | Rust, Docker |
 
 ```bash
@@ -103,6 +103,7 @@ The 1.0 names ([design](metrics-v1.md)) and the `--metric-names` modes:
 |---|---|
 | `applies_defaults` | Defaults: protocol `http`, port 8108, bind `0.0.0.0:8888`, timeout 5s, metric names `v1` |
 | `accepts_overrides` | Every flag overrides its default |
+| `probe_concurrency_defaults_to_16_and_must_be_positive` | `--probe-max-concurrency` defaults to 16, takes a value, and rejects 0 |
 | `rejects_invalid_port_and_negative_timeout` | Port 99999 and a negative timeout are rejected |
 | `requires_exactly_one_key_source` | One of `--typesense-api-key` / `--typesense-api-key-file` is required, and not both |
 | `reads_and_trims_the_key_file` | The key file is read and trimmed; an empty or missing file is an error |
@@ -157,6 +158,9 @@ The exporter runs with the default `--metric-names=v1` unless a test says otherw
 | `probe_scrapes_each_node_with_its_own_labels` | Probe a leader and a follower | Each answer has its own raft state and `host`/`port` labels; each node got exactly 6 requests, all with the API key |
 | `probe_output_matches_metrics_for_the_same_node` | `/metrics` and `/probe` for the configured node | Identical output apart from the scrape duration |
 | `a_hung_node_only_affects_its_own_probe` | One healthy, one hung, one unreachable node, probed together | The healthy probe is quick and healthy; the others return 200 with health 0 and no metrics |
+| `redirects_are_not_followed_so_the_key_stays_with_the_node` | An allowed node answers every request with a 302 to another server | The probe still returns 200 with `typesense_health` 0; the redirect target received no request, so the API key didn't follow |
+| `probe_refuses_downgrading_an_https_default_to_http` | Default protocol https, probe `http://` an allowed node | 403 `must be https`; the node received no request |
+| `probe_concurrency_is_capped` | `--probe-max-concurrency 1`, two slow nodes probed at once | Both return 200, one after the other |
 | `probe_refuses_targets_that_are_not_allowed_without_contacting_them` | Probe a node, with another port or scheme, that isn't in the allow list | 403 `not allowed`; the node received no request, so no API key left |
 | `probe_matches_allowed_targets_case_and_scheme_insensitively` | Allow `LocalHost:port`, probe `localhost`, `LOCALHOST` and `http://LocalHost` | All allowed |
 | `probe_always_allows_the_configured_host` | `--typesense-host` set, allow list names another node | Probing the configured host works |

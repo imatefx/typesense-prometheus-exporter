@@ -1,5 +1,6 @@
 use std::{
-    sync::Arc,
+    collections::HashSet,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -15,7 +16,7 @@ use tokio::signal;
 use crate::{
     cli::{CliArgs, MetricNames},
     prometheus_exp::{self, Scrape},
-    target::{AllowList, Target},
+    target::{is_loopback, AllowList, Target},
     typesense::TypesenseClient,
 };
 
@@ -35,6 +36,10 @@ struct AppState {
     default_scheme: String,
     default_port: u16,
     metric_names: MetricNames,
+    /// Probe targets already warned about for a plaintext API key.
+    plaintext_warned: Mutex<HashSet<(String, u16)>>,
+    /// Bounds concurrent /probe scrapes (`--probe-max-concurrency`).
+    probe_slots: tokio::sync::Semaphore,
 }
 
 /// Build the exporter's HTTP router for the node(s) described by `args`.
@@ -42,7 +47,9 @@ struct AppState {
 /// HTTP client can't be built.
 pub fn router(args: &CliArgs) -> std::io::Result<Router> {
     let api_key = args.api_key()?;
-    let mut builder = reqwest::Client::builder();
+    // Never follow redirects: reqwest would resend the API key header to
+    // wherever a node (or something impersonating it) redirects.
+    let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
     if args.typesense_timeout > 0 {
         builder = builder.timeout(Duration::from_secs(args.typesense_timeout));
     }
@@ -80,6 +87,8 @@ pub fn router(args: &CliArgs) -> std::io::Result<Router> {
         default_scheme: args.typesense_protocol.clone(),
         default_port: args.typesense_port,
         metric_names: args.metric_names,
+        plaintext_warned: Mutex::default(),
+        probe_slots: tokio::sync::Semaphore::new(args.probe_max_concurrency as usize),
     });
 
     Ok(Router::new()
@@ -199,7 +208,8 @@ async fn probe_handler(
         }
     };
     if !state.allowed.allows(&target) {
-        tracing::warn!(
+        // debug, not warn: refusals are triggered by unauthenticated callers.
+        tracing::debug!(
             "refused probe of {}:{}: not in --probe-allowed-targets",
             target.host,
             target.port
@@ -213,6 +223,36 @@ async fn probe_handler(
         );
     }
 
+    if target.scheme == "http" && state.default_scheme.eq_ignore_ascii_case("https") {
+        return (
+            StatusCode::FORBIDDEN,
+            "target scheme must be https, like --typesense-protocol; http would send the API key unencrypted\n"
+                .to_string(),
+        );
+    }
+    // With `*` the startup warning covers it; don't grow the set per caller.
+    if target.scheme == "http"
+        && !is_loopback(&target.host)
+        && !state.allowed.allows_any()
+        && state
+            .plaintext_warned
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert((target.host.clone(), target.port))
+    {
+        tracing::warn!(
+            "sending the Typesense API key over unencrypted http to {}:{}; probe https:// targets or set --typesense-protocol https",
+            target.host,
+            target.port
+        );
+    }
+
+    let Ok(_slot) = state.probe_slots.acquire().await else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "exporter shutting down\n".to_string(),
+        );
+    };
     let client = TypesenseClient::new(state.http.clone(), target.base_url(), state.api_key.clone());
     (
         StatusCode::OK,

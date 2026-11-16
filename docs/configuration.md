@@ -16,6 +16,7 @@ Every option can be set as a command-line flag or as an environment variable. Th
 | `--exporter-bind-port` | `EXPORTER_BIND_PORT` | `8888` | Port the exporter listens on. |
 | `--metric-names` | `TYPESENSE_METRIC_NAMES` | `v1` | Which metric names to export: `v1`, `both` or `legacy`. See [Metric names](#metric-names). |
 | `--probe-allowed-targets` | `TYPESENSE_PROBE_ALLOWED_TARGETS` | *(empty)* | Comma-separated `host[:port]` nodes that `/probe` may scrape, or `*` for any. See [Probing several nodes](#probing-several-nodes-from-one-exporter). |
+| `--probe-max-concurrency` | `TYPESENSE_PROBE_MAX_CONCURRENCY` | `16` | Most `/probe` scrapes running at once (minimum 1). Further probes wait for a free slot rather than fail. Each scrape makes six requests to its node, so this caps the load anyone who can reach the exporter can put on your nodes. |
 
 `typesense-prometheus-exporter --help` prints the same list. Logs go to stdout at `INFO` level, and failed Typesense calls are logged at `WARN`.
 
@@ -60,7 +61,13 @@ The exporter sends its API key to whatever node it scrapes. An open `/probe` wou
 
 Bind the exporter to a private interface or network as well, and use `https`.
 
-**Plaintext warning.** The exporter warns once at startup when the default protocol is `http` and the allow list is `*` or names a non-loopback host, because `/probe` could then send the key unencrypted. It does not track individual targets. A target that writes `http://` itself while the default is `https` is not warned about; that scheme comes from your Prometheus config.
+**Plaintext warning.** The exporter warns at startup when the default protocol is `http` and the allow list is `*` or names a non-loopback host, because `/probe` could then send the key unencrypted. It also warns the first time it probes each non-loopback node over `http`, including a target that writes `http://` itself while the default is `https`.
+
+**No downgrade to http.** With `--typesense-protocol https`, a target that writes `http://` is refused with a 403 before any request, so a caller can't make the exporter send the key unencrypted to an allowed node.
+
+**Proxies.** Like most HTTP clients, the exporter honours `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY`. Over `http` a proxy sees the API key; over `https` it only sees the host name. If your platform injects a proxy, add the Typesense nodes to `NO_PROXY` or use https.
+
+**Redirects are never followed.** A redirect from a node (or from something answering in its place) counts as a failed scrape, so the API key is never sent on to another host.
 
 ## API key permissions
 

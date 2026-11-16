@@ -9,7 +9,7 @@ use typesense_prometheus_exporter::{
     server,
 };
 use wiremock::{
-    matchers::{header, method, path},
+    matchers::{any, header, method, path},
     Mock, MockServer, ResponseTemplate,
 };
 
@@ -30,6 +30,7 @@ fn args_for(host: &str, port: u16, timeout: u64) -> CliArgs {
         typesense_timeout: timeout,
         metric_names: MetricNames::default(),
         probe_allowed_targets: Vec::new(),
+        probe_max_concurrency: 16,
     }
 }
 
@@ -937,6 +938,85 @@ async fn probe_refuses_targets_that_are_not_allowed_without_contacting_them() {
         received.is_empty(),
         "the API key must not leave: {received:?}"
     );
+}
+
+#[tokio::test]
+async fn redirects_are_not_followed_so_the_key_stays_with_the_node() {
+    let elsewhere = healthy_node(1).await;
+    let redirecting = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(
+            ResponseTemplate::new(302)
+                .insert_header("location", format!("{}/health", elsewhere.uri())),
+        )
+        .mount(&redirecting)
+        .await;
+    let base = probe_exporter(&[node_addr(&redirecting)], 0).await;
+
+    let (status, out) = probe(&base, &node_addr(&redirecting)).await;
+
+    assert_eq!(status, 200);
+    assert_eq!(health(&out), Some(0.0), "a redirect is a failed scrape");
+    let received = elsewhere.received_requests().await.unwrap();
+    assert!(
+        received.is_empty(),
+        "the API key must not follow a redirect: {received:?}"
+    );
+}
+
+#[tokio::test]
+async fn probe_refuses_downgrading_an_https_default_to_http() {
+    let node = healthy_node(1).await;
+    let mut args = args_for("unused", 1, 0);
+    args.typesense_host = None;
+    args.typesense_protocol = "https".into();
+    args.probe_allowed_targets = vec![node_addr(&node)];
+    let base = spawn_exporter(args).await;
+
+    let (status, body) = probe(&base, &format!("http://{}", node_addr(&node))).await;
+
+    assert_eq!(status, 403, "{body}");
+    assert!(body.contains("must be https"), "{body}");
+    let received = node.received_requests().await.unwrap();
+    assert!(
+        received.is_empty(),
+        "no plaintext request with the key: {received:?}"
+    );
+}
+
+#[tokio::test]
+async fn probe_concurrency_is_capped() {
+    let delay = Duration::from_millis(300);
+    let mut nodes = Vec::new();
+    for _ in 0..2 {
+        let node = MockServer::start().await;
+        Mock::given(any())
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"ok": true}))
+                    .set_delay(delay),
+            )
+            .mount(&node)
+            .await;
+        nodes.push(node);
+    }
+    let (a, b) = (node_addr(&nodes[0]), node_addr(&nodes[1]));
+    let mut args = args_for("unused", 1, 0);
+    args.typesense_host = None;
+    args.probe_allowed_targets = vec![a.clone(), b.clone()];
+    args.probe_max_concurrency = 1;
+    let base = spawn_exporter(args).await;
+
+    let started = Instant::now();
+    let ((sa, _), (sb, _)) = tokio::join!(probe(&base, &a), probe(&base, &b));
+    let took = started.elapsed();
+
+    assert_eq!(
+        (sa, sb),
+        (200, 200),
+        "callers wait for a slot, they aren't refused"
+    );
+    assert!(took >= delay * 2, "one probe at a time: {took:?}");
 }
 
 #[tokio::test]

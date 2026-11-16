@@ -52,10 +52,19 @@ impl TypesenseClient {
         self.get_json("/collections?exclude_fields=fields").await
     }
 
+    /// The key as a header value marked sensitive, so it is never printed if
+    /// requests are ever logged.
+    fn api_key_header(&self) -> reqwest::header::HeaderValue {
+        let mut value = reqwest::header::HeaderValue::from_str(&self.api_key)
+            .unwrap_or_else(|_| reqwest::header::HeaderValue::from_static(""));
+        value.set_sensitive(true);
+        value
+    }
+
     async fn get_json<T: DeserializeOwned>(&self, path: &str) -> reqwest::Result<T> {
         self.http
             .get(format!("{}{}", self.base_url, path))
-            .header("X-TYPESENSE-API-KEY", &self.api_key)
+            .header("X-TYPESENSE-API-KEY", self.api_key_header())
             .send()
             .await?
             .error_for_status()?

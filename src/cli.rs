@@ -88,6 +88,12 @@ pub struct CliArgs {
     /// --typesense-host is always allowed.
     #[arg(long, env = "TYPESENSE_PROBE_ALLOWED_TARGETS", value_delimiter = ',')]
     pub probe_allowed_targets: Vec<String>,
+
+    /// Most /probe scrapes run at once; more wait for a free slot. Each
+    /// scrape makes six requests to its node, so this bounds the load an
+    /// unauthenticated caller can put on the allowed nodes.
+    #[arg(long, env = "TYPESENSE_PROBE_MAX_CONCURRENCY", default_value_t = 16, value_parser = clap::value_parser!(u32).range(1..))]
+    pub probe_max_concurrency: u32,
 }
 
 impl CliArgs {
@@ -121,8 +127,8 @@ impl CliArgs {
 
     /// Whether /probe could send the API key unencrypted to another machine:
     /// the default protocol is http and the allow list is `*` or names a
-    /// non-loopback host. A target that spells out `http://` itself is not
-    /// covered; that is the operator's choice in the Prometheus config.
+    /// non-loopback host. With an https default, `http://` targets are
+    /// refused instead.
     pub fn probe_sends_key_in_plaintext(&self) -> bool {
         self.typesense_protocol.eq_ignore_ascii_case("http")
             && target::AllowList::parse(&self.probe_allowed_targets, self.typesense_port)
@@ -158,6 +164,18 @@ mod tests {
 
     fn parse(args: &[&str]) -> Result<CliArgs, clap::Error> {
         CliArgs::try_parse_from(std::iter::once("exporter").chain(args.iter().copied()))
+    }
+
+    #[test]
+    fn probe_concurrency_defaults_to_16_and_must_be_positive() {
+        let base = ["--typesense-host", "ts", "--typesense-api-key", "key"];
+        assert_eq!(parse(&base).unwrap().probe_max_concurrency, 16);
+        let mut set = base.to_vec();
+        set.extend(["--probe-max-concurrency", "4"]);
+        assert_eq!(parse(&set).unwrap().probe_max_concurrency, 4);
+        let mut zero = base.to_vec();
+        zero.extend(["--probe-max-concurrency", "0"]);
+        assert!(parse(&zero).is_err());
     }
 
     #[test]
