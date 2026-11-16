@@ -1,0 +1,7 @@
+target
+releases
+.git
+.omc
+.DS_Store
+screenshots
+grafana
