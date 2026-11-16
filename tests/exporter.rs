@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 use typesense_prometheus_exporter::{
     cli::{CliArgs, MetricNames},
+    logging::{self, LogFormat},
     server,
 };
 use wiremock::{
@@ -13,7 +14,7 @@ use wiremock::{
     Mock, MockServer, ResponseTemplate,
 };
 
-const API_KEY: &str = "test-key";
+const API_KEY: &str = "test-key-SECRET-7f3a9c";
 const METRICS: &str = include_str!("fixtures/metrics.json");
 const STATS: &str = include_str!("fixtures/stats.json");
 const COLLECTIONS: &str = include_str!("fixtures/collections.json");
@@ -33,6 +34,8 @@ fn args_for(host: &str, port: u16, timeout: u64) -> CliArgs {
         config: None,
         clusters: Default::default(),
         probe_max_concurrency: 16,
+        log_level: Default::default(),
+        log_format: Default::default(),
     }
 }
 
@@ -1435,7 +1438,7 @@ fn bad_config_files_are_reported_without_leaking_keys() {
 #[tokio::test]
 async fn the_exporter_starts_from_a_config_file_alone() {
     let node = healthy_node(1).await;
-    let key = temp_file("default-key", "test-key\n");
+    let key = temp_file("default-key", &format!("{API_KEY}\n"));
     let addr = node.address();
     let config = temp_file(
         "exporter.toml",
@@ -1564,4 +1567,237 @@ async fn a_rotated_cluster_key_file_is_used_by_the_next_probe() {
         health_keys(&mock).await,
         ["old-cluster-key", "new-cluster-key-longer"]
     );
+}
+
+/// Log output captured in memory.
+#[derive(Clone, Default)]
+struct LogBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for LogBuf {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuf {
+    type Writer = LogBuf;
+    fn make_writer(&'a self) -> LogBuf {
+        self.clone()
+    }
+}
+
+impl LogBuf {
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+    }
+}
+
+/// Capture this thread's logs for `directives` until the guard is dropped.
+/// Tests run on the current-thread runtime, so the exporter's tasks log here.
+fn capture(directives: &str, format: LogFormat) -> (LogBuf, tracing::subscriber::DefaultGuard) {
+    let buf = LogBuf::default();
+    let filter = logging::filter(Default::default(), Some(directives)).unwrap();
+    let guard =
+        tracing::subscriber::set_default(logging::subscriber(filter, format, buf.clone(), false));
+    (buf, guard)
+}
+
+#[tokio::test]
+async fn debug_logs_one_line_per_typesense_request() {
+    let (logs, _guard) = capture("typesense_prometheus_exporter=debug", LogFormat::Text);
+    let mock = MockServer::start().await;
+    mount(&mock, "/stats.json", ResponseTemplate::new(503)).await;
+    mount(
+        &mock,
+        "/health",
+        ResponseTemplate::new(200).set_body_json(json!({"ok": true})),
+    )
+    .await;
+    let base = exporter_for(&mock, 5).await;
+
+    scrape(&base).await;
+
+    let out = logs.text();
+    let target = node_addr(&mock);
+    let lines: Vec<&str> = out
+        .lines()
+        .filter(|l| l.ends_with("typesense request") || l.contains("typesense request endpoint"))
+        .collect();
+    assert_eq!(lines.len(), 6, "{out}");
+    for endpoint in [
+        "/metrics.json",
+        "/stats.json",
+        "/health",
+        "/debug",
+        "/status",
+        "/collections?exclude_fields=fields",
+    ] {
+        let line = lines
+            .iter()
+            .find(|l| l.contains(&format!("endpoint={endpoint} ")))
+            .unwrap_or_else(|| panic!("no line for {endpoint}: {out}"));
+        assert!(line.contains(&format!("target={target}")), "{line}");
+        assert!(line.contains("elapsed_ms="), "{line}");
+        assert!(line.contains("DEBUG"), "{line}");
+    }
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("endpoint=/health ") && l.contains("status=200")),
+        "{out}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("endpoint=/stats.json ") && l.contains("status=503")),
+        "{out}"
+    );
+    assert!(out.contains("scrape finished"), "{out}");
+}
+
+#[tokio::test]
+async fn request_lines_are_hidden_at_the_default_level() {
+    let (logs, _guard) = capture("typesense_prometheus_exporter=info", LogFormat::Text);
+    let mock = healthy_node(1).await;
+    let base = exporter_for(&mock, 5).await;
+
+    scrape(&base).await;
+
+    assert!(
+        !logs.text().contains("typesense request"),
+        "{}",
+        logs.text()
+    );
+}
+
+#[tokio::test]
+async fn a_failed_request_is_logged_with_its_error_at_debug() {
+    let (logs, _guard) = capture("typesense_prometheus_exporter=debug", LogFormat::Json);
+    // Nothing listens on a port that was just released.
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let base = spawn_exporter(args_for("127.0.0.1", port, 1)).await;
+
+    scrape(&base).await;
+
+    let out = logs.text();
+    let failed: Vec<serde_json::Value> = out
+        .lines()
+        .map(|l| serde_json::from_str::<serde_json::Value>(l).expect(l))
+        .filter(|l| l["fields"]["message"] == "typesense request failed")
+        .collect();
+    assert_eq!(failed.len(), 6, "{out}");
+    assert!(failed[0]["fields"]["error"]
+        .as_str()
+        .unwrap()
+        .contains("error sending request"));
+    assert!(
+        failed[0]["fields"]["error"]
+            .as_str()
+            .unwrap()
+            .contains(": "),
+        "the cause is included: {out}"
+    );
+    assert!(failed[0]["fields"]["elapsed_ms"].is_u64());
+}
+
+#[tokio::test]
+async fn a_timeout_is_reported_with_the_limit_and_the_setting_to_change() {
+    let (logs, _guard) = capture("typesense_prometheus_exporter=info", LogFormat::Text);
+    let mock = MockServer::start().await;
+    let slow = json_body(METRICS).set_delay(Duration::from_secs(10));
+    for route in [
+        "/metrics.json",
+        "/stats.json",
+        "/health",
+        "/debug",
+        "/status",
+        "/collections",
+    ] {
+        mount(&mock, route, slow.clone()).await;
+    }
+    let base = exporter_for(&mock, 1).await;
+
+    scrape(&base).await;
+
+    let out = logs.text();
+    assert!(out.contains("WARN"), "{out}");
+    assert!(out.contains("timed out after 1s"), "{out}");
+    assert!(out.contains("TYPESENSE_TIMEOUT"), "{out}");
+    assert!(out.contains("/health"), "{out}");
+}
+
+#[tokio::test]
+async fn startup_logs_the_mode_and_settings_but_never_the_key() {
+    // `trace` for every crate, including hyper and rustls, at their most verbose.
+    let (logs, _guard) = capture("trace", LogFormat::Text);
+    let node = healthy_node(1).await;
+    let key_file = temp_file("logged-key", &format!("{API_KEY}\n"));
+    let addr = node.address();
+    let mut args = args_for(&addr.ip().to_string(), addr.port(), 3);
+    args.typesense_api_key = None;
+    args.typesense_api_key_file = Some(key_file);
+    args.probe_allowed_targets = vec!["allowed-a:8108".to_string()];
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let bind = listener.local_addr().unwrap();
+    let base = format!("http://{bind}");
+    let task = tokio::spawn(server::serve(listener, args));
+
+    let (status, _) = scrape(&base).await;
+    probe(&base, &node_addr(&node)).await;
+    probe(&base, "not-allowed:1").await;
+    task.abort();
+
+    let out = logs.text();
+    assert_eq!(status, 200);
+    assert!(out.contains(env!("CARGO_PKG_VERSION")), "{out}");
+    assert!(out.contains(&bind.to_string()), "{out}");
+    assert!(out.contains("metric_names=v1"), "{out}");
+    assert!(out.contains("timeout=3s"), "{out}");
+    assert!(
+        out.contains(&format!("/metrics scrapes http://{}", node_addr(&node))),
+        "{out}"
+    );
+    assert!(out.contains("/probe allows allowed-a:8108"), "{out}");
+    assert!(
+        out.contains("typesense request"),
+        "trace includes debug: {out}"
+    );
+    assert!(!out.contains(API_KEY), "the API key was logged:\n{out}");
+}
+
+#[tokio::test]
+async fn startup_logs_each_cluster_with_its_node_count_and_no_key() {
+    let (logs, _guard) = capture("trace", LogFormat::Text);
+    let node = healthy_node(1).await;
+    let key_file = temp_file("cluster-logged-key", "cluster-SECRET-key-1\n");
+    let config = temp_file(
+        "clusters-logged.toml",
+        &format!(
+            "[clusters.prod]\ntargets = [{:?}, \"p2:2\"]\napi_key_file = {:?}\nprotocol = \"https\"\n",
+            node_addr(&node),
+            key_file.display().to_string()
+        ),
+    );
+    let args = config_only_args(config);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(server::serve(listener, args));
+    // The node does not speak https, so the probe fails; the key must not leak either way.
+    probe(&base, &node_addr(&node)).await;
+    task.abort();
+
+    let out = logs.text();
+    assert!(
+        out.contains("/probe cluster prod: 2 node(s) over https"),
+        "{out}"
+    );
+    assert!(!out.contains("cluster-SECRET-key-1"), "{out}");
 }

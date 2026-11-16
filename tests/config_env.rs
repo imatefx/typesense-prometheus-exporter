@@ -4,11 +4,14 @@
 
 use std::sync::Mutex;
 
-use typesense_prometheus_exporter::cli::{CliArgs, MetricNames};
+use typesense_prometheus_exporter::{
+    cli::{CliArgs, MetricNames},
+    logging::{LogFormat, LogLevel},
+};
 
 static ENV: Mutex<()> = Mutex::new(());
 
-const VARS: [&str; 12] = [
+const VARS: [&str; 14] = [
     "TYPESENSE_PORT",
     "TYPESENSE_HOST",
     "TYPESENSE_API_KEY",
@@ -21,6 +24,8 @@ const VARS: [&str; 12] = [
     "EXPORTER_BIND_ADDRESS",
     "EXPORTER_BIND_PORT",
     "TYPESENSE_PROBE_MAX_CONCURRENCY",
+    "TYPESENSE_EXPORTER_LOG_LEVEL",
+    "TYPESENSE_EXPORTER_LOG_FORMAT",
 ];
 
 /// Run `test` with a clean environment and a config file holding `toml`.
@@ -149,7 +154,7 @@ fn every_blank_environment_variable_counts_as_unset() {
     let toml = format!(
         "typesense_host = \"filehost\"\ntypesense_port = 1111\ntypesense_protocol = \"https\"\n\
          typesense_timeout = 7\nexporter_bind_address = \"127.0.0.1\"\nexporter_bind_port = 9999\n\
-         metric_names = \"both\"\nprobe_max_concurrency = 3\ntypesense_api_key_file = {key}\n"
+         metric_names = \"both\"\nprobe_max_concurrency = 3\nlog_level = \"debug\"\nlog_format = \"json\"\ntypesense_api_key_file = {key}\n"
     );
     with_file("blank", &toml, |config| {
         // Compose's `VAR: ${VAR:-}` sets every variable, most of them empty.
@@ -167,6 +172,8 @@ fn every_blank_environment_variable_counts_as_unset() {
         assert_eq!(args.exporter_bind_port, 9999);
         assert_eq!(args.metric_names, MetricNames::Both);
         assert_eq!(args.probe_max_concurrency, 3);
+        assert_eq!(args.log_level, LogLevel::Debug);
+        assert_eq!(args.log_format, LogFormat::Json);
         assert_eq!(args.api_key().unwrap(), "file-key");
 
         // Without a file, blank variables give the built-in defaults.
@@ -176,5 +183,81 @@ fn every_blank_environment_variable_counts_as_unset() {
         assert_eq!(args.typesense_port, 8108);
         assert_eq!(args.metric_names, MetricNames::V1);
         assert_eq!(args.probe_max_concurrency, 16);
+        assert_eq!(args.log_level, LogLevel::Info);
+        assert_eq!(args.log_format, LogFormat::Text);
+    });
+}
+
+#[test]
+fn log_options_follow_flag_then_environment_then_file_then_default() {
+    with_file(
+        "log",
+        "log_level = \"warn\"\nlog_format = \"json\"\n",
+        |config| {
+            let args = CliArgs::load_from(["exporter", config]).unwrap();
+            assert_eq!(args.log_level, LogLevel::Warn, "file beats the default");
+            assert_eq!(args.log_format, LogFormat::Json);
+
+            std::env::set_var("TYPESENSE_EXPORTER_LOG_LEVEL", "debug");
+            std::env::set_var("TYPESENSE_EXPORTER_LOG_FORMAT", "text");
+            let args = CliArgs::load_from(["exporter", config]).unwrap();
+            assert_eq!(
+                args.log_level,
+                LogLevel::Debug,
+                "environment beats the file"
+            );
+            assert_eq!(args.log_format, LogFormat::Text);
+
+            let args =
+                CliArgs::load_from(["exporter", config, "--log-level=trace", "--log-format=json"])
+                    .unwrap();
+            assert_eq!(
+                args.log_level,
+                LogLevel::Trace,
+                "flag beats the environment"
+            );
+            assert_eq!(args.log_format, LogFormat::Json);
+
+            // Blank variables are ignored, so the file applies again.
+            std::env::set_var("TYPESENSE_EXPORTER_LOG_LEVEL", " ");
+            std::env::set_var("TYPESENSE_EXPORTER_LOG_FORMAT", "");
+            let args = CliArgs::load_from(["exporter", config]).unwrap();
+            assert_eq!(args.log_level, LogLevel::Warn);
+            assert_eq!(args.log_format, LogFormat::Json);
+        },
+    );
+}
+
+#[test]
+fn invalid_log_values_are_rejected_with_a_clear_error() {
+    with_file("badlog", "", |config| {
+        std::env::set_var("TYPESENSE_EXPORTER_LOG_LEVEL", "loud");
+        let e = CliArgs::load_from(["exporter", config])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("loud") && e.contains("[possible values: error, warn, info, debug, trace]"),
+            "{e}"
+        );
+
+        std::env::remove_var("TYPESENSE_EXPORTER_LOG_LEVEL");
+        std::env::set_var("TYPESENSE_EXPORTER_LOG_FORMAT", "yaml");
+        let e = CliArgs::load_from(["exporter", config])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("yaml") && e.contains("text") && e.contains("json"),
+            "{e}"
+        );
+    });
+    with_file("badlogfile", "log_level = \"loud\"\n", |config| {
+        let e = CliArgs::load_from(["exporter", config])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("config file") && e.contains("log_level") || e.contains("at line"),
+            "{e}"
+        );
+        assert!(!e.contains("loud"), "{e}");
     });
 }

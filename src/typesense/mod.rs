@@ -1,5 +1,7 @@
 pub mod models;
 
+use std::time::Instant;
+
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 
@@ -8,6 +10,19 @@ use models::{
     typesense_health_model::TypesenseHealth, typesense_metrics_model::TypesenseMetrics,
     typesense_stats_model::TypesenseStats, typesense_status_model::TypesenseStatus,
 };
+
+/// An error with its causes, e.g. `error sending request for url (...):
+/// connection refused`, which reqwest's own message leaves out.
+pub fn describe(err: &dyn std::error::Error) -> String {
+    let mut out = err.to_string();
+    let mut source = err.source();
+    while let Some(cause) = source {
+        out.push_str(": ");
+        out.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    out
+}
 
 /// Thin HTTP client for the Typesense monitoring endpoints.
 pub struct TypesenseClient {
@@ -64,13 +79,33 @@ impl TypesenseClient {
     }
 
     async fn get_json<T: DeserializeOwned>(&self, path: &str) -> reqwest::Result<T> {
-        self.http
+        // host:port only: the base URL never carries credentials.
+        let target = self
+            .base_url
+            .split_once("://")
+            .map_or(self.base_url.as_str(), |(_, rest)| rest);
+        let started = Instant::now();
+        let sent = self
+            .http
             .get(format!("{}{}", self.base_url, path))
             .header("X-TYPESENSE-API-KEY", self.api_key_header())
             .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await
+            .await;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let response = match sent {
+            Ok(response) => response,
+            Err(err) => {
+                tracing::debug!(endpoint = %path, %target, elapsed_ms, error = %describe(&err), "typesense request failed");
+                return Err(err);
+            }
+        };
+        tracing::debug!(
+            endpoint = %path,
+            %target,
+            status = response.status().as_u16(),
+            elapsed_ms,
+            "typesense request"
+        );
+        response.error_for_status()?.json().await
     }
 }

@@ -152,6 +152,8 @@ Then import the [dashboards](grafana/) and [alert rules](deploy/prometheus/alert
 | `--metric-names` | `TYPESENSE_METRIC_NAMES` | `v1` (`both` or `legacy` keep the 0.4 names; see [migrating](docs/migrating-to-1.0.md)) |
 | `--probe-allowed-targets` | `TYPESENSE_PROBE_ALLOWED_TARGETS` | *(empty)*: comma-separated `host[:port]` nodes `/probe?target=` may scrape, or `*` for any |
 | `--probe-max-concurrency` | `TYPESENSE_PROBE_MAX_CONCURRENCY` | `16`: most `/probe` scrapes running at once; more wait for a slot |
+| `--log-level` | `TYPESENSE_EXPORTER_LOG_LEVEL` | `info` (`error`, `warn`, `info`, `debug`, `trace`); `debug` logs every Typesense request, and `RUST_LOG` overrides it; see [logging](docs/configuration.md#logging) |
+| `--log-format` | `TYPESENSE_EXPORTER_LOG_FORMAT` | `text` (or `json`, one object per line) |
 
 See [configuration](docs/configuration.md) for API key permissions, timeouts, failure behaviour, Prometheus and Grafana setup.
 
@@ -225,7 +227,7 @@ make up / down    # start / stop the Docker Compose stack
 ./build-cross.sh  # static linux/amd64 + linux/arm64 binaries
 ```
 
-There are 167 tests in three layers. **Unit** and **integration** tests run against a mock Typesense. **End-to-end** tests run against a real cluster and break it on purpose: leader failover, a hung node, quorum loss. See [testing](docs/testing.md) for the full list.
+There are 182 tests in three layers. **Unit** and **integration** tests run against a mock Typesense. **End-to-end** tests run against a real cluster and break it on purpose: leader failover, a hung node, quorum loss. See [testing](docs/testing.md) for the full list.
 
 ## Contributors
 
