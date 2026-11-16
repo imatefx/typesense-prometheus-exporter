@@ -126,9 +126,9 @@ The exporter runs with the default `--metric-names=v1` unless a test says otherw
 | `both_names_emit_old_and_new_and_shared_families_once` | `--metric-names=both` | Both name sets; shared families (health, raft, info, documents, scrape health) once; every 0.4 series identical to `legacy` |
 | `v1_unknown_fields_fall_back_to_unmapped` | Fields with no 1.0 name in `/metrics.json` and `/stats.json` | `typesense_unmapped{source,key}` with the raw value; fields Typesense didn't send are absent |
 
-**Checking that the tests catch bugs.** The suite was checked by breaking the code on purpose:
-- Removing the API key header failed 5 tests.
-- Treating any `/health` response as healthy failed `health_ok_false_with_200_is_unhealthy`.
+**Checking that the tests catch bugs.** The suite was checked by breaking the code on purpose (re-measured for 1.0.0):
+- Removing the API key header failed 17 of the 24 integration tests.
+- Treating any `/health` response as healthy failed `health_ok_false_with_200_is_unhealthy`, and nothing else.
 
 ## End-to-end tests: `tests/e2e.rs`
 
@@ -185,6 +185,7 @@ If the local figure looks wrong (lines marked uncovered that are blank or commen
 | `lint` | `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` |
 | `audit` | `cargo audit -D warnings`: fails on any known vulnerability or warning in the dependency tree |
 | `test` | Unit and integration tests under `cargo llvm-cov` (90% minimum); uploads `lcov.info`; publishes the coverage badge on `main` |
+| `rules` | `promtool check rules` on the alert and recording rules, and `promtool test rules` on [`legacy-names.test.yml`](../deploy/prometheus/legacy-names.test.yml) |
 | `e2e` | `cargo nextest run --features e2e --test e2e --profile ci`; uploads a JUnit report; prints exporter logs on failure; always tears the stack down |
 
 Two more workflows check every pull request:
