@@ -201,6 +201,10 @@ mod tests {
             "absent cores are not exported"
         );
         assert!(
+            !out.contains("system_memory_total_swap_bytes"),
+            "metrics Typesense did not report are not exported"
+        );
+        assert!(
             !out.contains("system_cpuX_"),
             "only numbered cores are exported"
         );

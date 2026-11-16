@@ -21,7 +21,7 @@ pub struct TypesenseClient {
 impl TypesenseClient {
     pub fn new(args: &CliArgs) -> reqwest::Result<Self> {
         let mut builder = Client::builder();
-        if let Ok(secs) = u64::try_from(args.typesense_timeout) {
+        if let Ok(secs @ 1..) = u64::try_from(args.typesense_timeout) {
             builder = builder.timeout(Duration::from_secs(secs));
         }
         Ok(Self {

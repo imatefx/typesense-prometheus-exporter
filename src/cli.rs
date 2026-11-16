@@ -28,8 +28,10 @@ pub struct CliArgs {
     #[arg(long, env, default_value_t = 8888)]
     pub exporter_bind_port: u16,
 
-    /// Timeout for Typesense API requests in seconds (-1 to disable)
-    #[arg(long, env, default_value_t = -1)]
+    /// Timeout for Typesense API requests in seconds (0 or less disables it).
+    /// Keep it below the Prometheus scrape timeout so a hung Typesense shows
+    /// up as unhealthy instead of a failed scrape.
+    #[arg(long, env, default_value_t = 5)]
     pub typesense_timeout: i64,
 }
 
@@ -52,7 +54,7 @@ mod tests {
         assert_eq!(args.typesense_port, 8108);
         assert_eq!(args.exporter_bind_address, "0.0.0.0");
         assert_eq!(args.exporter_bind_port, 8888);
-        assert_eq!(args.typesense_timeout, -1);
+        assert_eq!(args.typesense_timeout, 5);
     }
 
     #[test]

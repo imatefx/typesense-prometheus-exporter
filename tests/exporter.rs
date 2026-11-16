@@ -310,3 +310,14 @@ async fn run_fails_when_the_port_is_taken() {
 
     assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
 }
+
+#[tokio::test]
+async fn zero_timeout_means_no_timeout() {
+    let mock = healthy_node(1).await;
+    let base = exporter_for(&mock, 0).await;
+
+    let (_, out) = scrape(&base).await;
+
+    assert_eq!(health(&out), Some(1.0));
+    assert!(out.contains("typesense_metrics{"));
+}

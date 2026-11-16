@@ -98,14 +98,14 @@ panel_query_has_data() {
       "queries": [{"refId": "A", "datasource": {"uid": "prometheus"},
                    "expr": "typesense_metrics{key=~\"system_cpu[0-9]+_active_percentage\"}",
                    "instant": true}]
-    }' | jq -e '.results.A.frames | length > 0'
+    }' | jq -e '[.results.A.frames[].data.values[1] // [] | length] | add > 0'
 }
 eventually 30 "dashboard per-core CPU query returns data through Grafana" panel_query_has_data
 
 echo "==> Failure: stopping Typesense"
 docker compose stop typesense >/dev/null
 eventually 30 "exporter reports Typesense unhealthy" gauge_is typesense_health 0
-eventually 30 "exporter omits metrics it cannot fetch" sh -c "! curl -sf $EXPORTER/metrics | grep -q '^typesense_metrics{'"
+eventually 30 "exporter omits metrics it cannot fetch" sh -c "out=\$(curl -sf $EXPORTER/metrics) && ! printf '%s' \"\$out\" | grep -q '^typesense_metrics{'"
 eventually 30 "exporter still serves /metrics" metrics
 eventually 60 "TypesenseUnhealthy alert is pending" alert_state_is TypesenseUnhealthy pending
 eventually 30 "TypesenseNoLeader alert is pending" alert_state_is TypesenseNoLeader pending

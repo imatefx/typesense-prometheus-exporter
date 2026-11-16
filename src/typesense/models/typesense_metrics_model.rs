@@ -4,7 +4,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 /// Response of Typesense's `/metrics.json` endpoint. Typesense reports every
-/// value as a string; missing keys default to empty and are exported as 0.
+/// value as a string; keys missing from the response are left empty and not
+/// exported.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct TypesenseMetrics {
@@ -31,8 +32,8 @@ pub struct TypesenseMetrics {
 }
 
 impl TypesenseMetrics {
-    /// `(metric key, raw value)` pairs: the fixed metrics followed by one entry
-    /// per CPU core that Typesense reported.
+    /// `(metric key, raw value)` pairs for every metric Typesense reported:
+    /// the fixed metrics followed by one entry per CPU core.
     pub fn entries(&self) -> impl Iterator<Item = (&str, &str)> {
         let fixed = [
             (
@@ -85,7 +86,9 @@ impl TypesenseMetrics {
                 &self.typesense_memory_retained_bytes,
             ),
         ]
-        .map(|(key, value)| (key, value.as_str()));
+        .map(|(key, value)| (key, value.as_str()))
+        .into_iter()
+        .filter(|(_, value)| !value.is_empty());
 
         let per_core = self.other.iter().filter_map(|(key, value)| {
             let core = key
@@ -95,7 +98,7 @@ impl TypesenseMetrics {
             Some((key.as_str(), value.as_str()?)).filter(|_| is_core_number)
         });
 
-        fixed.into_iter().chain(per_core)
+        fixed.chain(per_core)
     }
 }
 
@@ -144,10 +147,17 @@ mod tests {
     }
 
     #[test]
-    fn empty_response_still_lists_fixed_metrics() {
-        let m: TypesenseMetrics = serde_json::from_str("{}").unwrap();
+    fn unreported_metrics_are_skipped() {
+        let m: TypesenseMetrics =
+            serde_json::from_str(r#"{"system_memory_total_bytes": "1024"}"#).unwrap();
 
-        assert_eq!(keys(&m).len(), 16);
-        assert!(m.entries().all(|(_, v)| v.is_empty()));
+        assert_eq!(keys(&m), ["system_memory_total_bytes"]);
+        assert_eq!(
+            serde_json::from_str::<TypesenseMetrics>("{}")
+                .unwrap()
+                .entries()
+                .count(),
+            0
+        );
     }
 }
