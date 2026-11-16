@@ -1,6 +1,6 @@
 # Kubernetes examples
 
-Plain manifests, no Helm chart. Both run the exporter as user 65534 with a read-only root file system, no capabilities and a `RuntimeDefault` seccomp profile, and probe `/` on port 8888. The image is `imatefx/typesense-prometheus-exporter:v1.2.0`.
+Plain manifests, no Helm chart. Both run the exporter as user 65534 with a read-only root file system, no capabilities and a `RuntimeDefault` seccomp profile, and probe `/` on port 8888. The image is `imatefx/typesense-prometheus-exporter:v1.3.0`.
 
 | Folder | Use it when | Prometheus resource |
 |---|---|---|
