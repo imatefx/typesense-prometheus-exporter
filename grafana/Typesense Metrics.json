@@ -125,7 +125,8 @@
                 "value": 80
               }
             ]
-          }
+          },
+          "unit": "percent"
         },
         "overrides": []
       },
@@ -138,9 +139,12 @@
       "id": 2,
       "options": {
         "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
           "showLegend": true
         },
         "tooltip": {
@@ -154,116 +158,24 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "editorMode": "builder",
+          "editorMode": "code",
           "expr": "typesense_metrics{key=\"system_cpu_active_percentage\"}",
           "interval": "",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}} · all cores",
           "range": true,
-          "refId": "system_cpu_active_percentage"
+          "refId": "all_cores"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "editorMode": "builder",
-          "expr": "typesense_metrics{key=\"system_cpu1_active_percentage\"}",
-          "hide": false,
+          "editorMode": "code",
+          "expr": "label_replace(typesense_metrics{key=~\"system_cpu[0-9]+_active_percentage\"}, \"core\", \"$1\", \"key\", \"system_cpu([0-9]+)_active_percentage\")",
           "interval": "",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}} · core {{core}}",
           "range": true,
-          "refId": "system_cpu1_active_percentage"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "builder",
-          "expr": "typesense_metrics{key=\"system_cpu2_active_percentage\"}",
-          "hide": false,
-          "interval": "",
-          "legendFormat": "{{key}}",
-          "range": true,
-          "refId": "system_cpu2_active_percentage"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "builder",
-          "expr": "typesense_metrics{key=\"system_cpu3_active_percentage\"}",
-          "hide": false,
-          "interval": "",
-          "legendFormat": "{{key}}",
-          "range": true,
-          "refId": "system_cpu3_active_percentage"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "builder",
-          "expr": "typesense_metrics{key=\"system_cpu4_active_percentage\"}",
-          "hide": false,
-          "interval": "",
-          "legendFormat": "{{key}}",
-          "range": true,
-          "refId": "system_cpu4_active_percentage"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "builder",
-          "expr": "typesense_metrics{key=\"system_cpu5_active_percentage\"}",
-          "hide": false,
-          "interval": "",
-          "legendFormat": "{{key}}",
-          "range": true,
-          "refId": "system_cpu5_active_percentage"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "builder",
-          "expr": "typesense_metrics{key=\"system_cpu6_active_percentage\"}",
-          "hide": false,
-          "interval": "",
-          "legendFormat": "{{key}}",
-          "range": true,
-          "refId": "system_cpu6_active_percentage"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "builder",
-          "expr": "typesense_metrics{key=\"system_cpu7_active_percentage\"}",
-          "hide": false,
-          "interval": "",
-          "legendFormat": "{{key}}",
-          "range": true,
-          "refId": "system_cpu7_active_percentage"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "builder",
-          "expr": "typesense_metrics{key=\"system_cpu8_active_percentage\"}",
-          "hide": false,
-          "interval": "",
-          "legendFormat": "{{key}}",
-          "range": true,
-          "refId": "system_cpu8_active_percentage"
+          "refId": "per_core"
         }
       ],
       "title": "System CPU Active Percentage",
@@ -356,7 +268,7 @@
           "editorMode": "builder",
           "expr": "typesense_metrics{key=\"system_disk_total_bytes\"}",
           "format": "time_series",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}} · disk total",
           "range": true,
           "refId": "A"
         },
@@ -368,7 +280,7 @@
           "editorMode": "builder",
           "expr": "typesense_metrics{key=\"system_disk_used_bytes\"}",
           "hide": false,
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}} · disk used",
           "range": true,
           "refId": "B"
         }
@@ -461,7 +373,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_metrics{key=\"system_memory_total_bytes\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}} · memory total",
           "range": true,
           "refId": "A"
         },
@@ -473,7 +385,7 @@
           "editorMode": "builder",
           "expr": "typesense_metrics{key=\"system_memory_used_bytes\"}",
           "hide": false,
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}} · memory used",
           "range": true,
           "refId": "B"
         }
@@ -566,7 +478,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_metrics{key=\"system_network_received_bytes\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -659,12 +571,118 @@
           },
           "editorMode": "builder",
           "expr": "typesense_metrics{key=\"system_network_sent_bytes\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
       ],
       "title": "System Network - Sent",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "decbytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 17
+      },
+      "id": 131,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "typesense_metrics{key=\"system_memory_total_swap_bytes\"}",
+          "interval": "",
+          "legendFormat": "{{host}} · memory total swap",
+          "range": true,
+          "refId": "system_memory_total_swap_bytes"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "typesense_metrics{key=\"system_memory_used_swap_bytes\"}",
+          "interval": "",
+          "legendFormat": "{{host}} · memory used swap",
+          "range": true,
+          "refId": "system_memory_used_swap_bytes"
+        }
+      ],
+      "title": "System Swap Usage",
       "type": "timeseries"
     },
     {
@@ -761,7 +779,7 @@
               },
               "editorMode": "builder",
               "expr": "typesense_metrics{key=\"typesense_memory_active_bytes\"}",
-              "legendFormat": "{{key}}",
+              "legendFormat": "{{host}}",
               "range": true,
               "refId": "A"
             }
@@ -853,7 +871,7 @@
               },
               "editorMode": "builder",
               "expr": "typesense_metrics{key=\"typesense_memory_metadata_bytes\"}",
-              "legendFormat": "{{key}}",
+              "legendFormat": "{{host}}",
               "range": true,
               "refId": "A"
             }
@@ -945,7 +963,7 @@
               },
               "editorMode": "builder",
               "expr": "typesense_metrics{key=\"typesense_memory_fragmentation_ratio\"}",
-              "legendFormat": "{{key}}",
+              "legendFormat": "{{host}}",
               "range": true,
               "refId": "A"
             }
@@ -1037,7 +1055,7 @@
               },
               "editorMode": "builder",
               "expr": "typesense_metrics{key=\"typesense_memory_mapped_bytes\"}",
-              "legendFormat": "{{key}}",
+              "legendFormat": "{{host}}",
               "range": true,
               "refId": "A"
             }
@@ -1129,7 +1147,7 @@
               },
               "editorMode": "builder",
               "expr": "typesense_metrics{key=\"typesense_memory_retained_bytes\"}",
-              "legendFormat": "{{key}}",
+              "legendFormat": "{{host}}",
               "range": true,
               "refId": "A"
             }
@@ -1221,7 +1239,7 @@
               },
               "editorMode": "builder",
               "expr": "typesense_metrics{key=\"typesense_memory_resident_bytes\"}",
-              "legendFormat": "{{key}}",
+              "legendFormat": "{{host}}",
               "range": true,
               "refId": "A"
             }
@@ -1313,7 +1331,7 @@
               },
               "editorMode": "builder",
               "expr": "typesense_metrics{key=\"typesense_memory_allocated_bytes\"}",
-              "legendFormat": "{{key}}",
+              "legendFormat": "{{host}}",
               "range": true,
               "refId": "A"
             }

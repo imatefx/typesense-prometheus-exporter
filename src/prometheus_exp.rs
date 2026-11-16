@@ -1,460 +1,294 @@
-extern crate prometheus;
-use std::sync::Arc;
+use std::sync::OnceLock;
 
-use crate::{
-    cli::CliArgs,
-    typesense::models::{
-        typesense_metrics_model::TypesenseMetrics,
-        typesense_stats_model::TypesenseStats,
-        typesense_health_model::TypesenseHealth,
-        typesense_debug_model::TypesenseDebug,
-    },
-};
-use prometheus::{register_gauge_vec_with_registry, Encoder, Registry, TextEncoder};
+use prometheus::{GaugeVec, Opts, Registry, TextEncoder};
 use regex::Regex;
+use serde_json::{Map, Value};
 
-pub(crate) async fn generate_metrics(
-    ts_metrics: TypesenseMetrics,
-    ts_stats: TypesenseStats,
-    ts_health: TypesenseHealth,
-    ts_debug: TypesenseDebug,
-    cli_args: Arc<CliArgs>,
-) -> String {
-    let registry = Registry::new();
+use crate::typesense::models::{
+    typesense_metrics_model::TypesenseMetrics, typesense_stats_model::TypesenseStats,
+};
 
-    let typesense_metrics = register_gauge_vec_with_registry!(
-        "typesense_metrics",
-        "Data received through the metrics api of typesense",
-        &["host", "port", "key"],
-        registry
-    )
-    .unwrap();
+const BASE_LABELS: &[&str] = &["host", "port", "key"];
+const COLLECTION_LABELS: &[&str] = &["host", "port", "key", "method", "collection_name", "action"];
+const TARGET_LABELS: &[&str] = &["host", "port"];
 
-    typesense_metrics
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "system_cpu1_active_percentage",
-        ])
-        .set(
-            ts_metrics
-                .system_cpu1_active_percentage
-                .parse()
-                .unwrap_or(0.0),
-        );
-    typesense_metrics
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "system_cpu3_active_percentage",
-        ])
-        .set(
-            ts_metrics
-                .system_cpu3_active_percentage
-                .parse()
-                .unwrap_or(0.0),
-        );
-    typesense_metrics
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "system_cpu2_active_percentage",
-        ])
-        .set(
-            ts_metrics
-                .system_cpu2_active_percentage
-                .parse()
-                .unwrap_or(0.0),
-        );
-    typesense_metrics
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "system_cpu4_active_percentage",
-        ])
-        .set(
-            ts_metrics
-                .system_cpu4_active_percentage
-                .parse()
-                .unwrap_or(0.0),
-        );
-    typesense_metrics
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "system_cpu_active_percentage",
-        ])
-        .set(
-            ts_metrics
-                .system_cpu_active_percentage
-                .parse()
-                .unwrap_or(0.0),
-        );
-    typesense_metrics
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "system_disk_total_bytes",
-        ])
-        .set(ts_metrics.system_disk_total_bytes.parse().unwrap_or(0.0));
-    typesense_metrics
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "system_disk_used_bytes",
-        ])
-        .set(ts_metrics.system_disk_used_bytes.parse().unwrap_or(0.0));
-    typesense_metrics
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "system_memory_total_bytes",
-        ])
-        .set(ts_metrics.system_memory_total_bytes.parse().unwrap_or(0.0));
-    typesense_metrics
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "system_memory_used_bytes",
-        ])
-        .set(ts_metrics.system_memory_used_bytes.parse().unwrap_or(0.0));
-    typesense_metrics
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "system_network_received_bytes",
-        ])
-        .set(
-            ts_metrics
-                .system_network_received_bytes
-                .parse()
-                .unwrap_or(0.0),
-        );
-    typesense_metrics
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "system_network_sent_bytes",
-        ])
-        .set(ts_metrics.system_network_sent_bytes.parse().unwrap_or(0.0));
-    typesense_metrics
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "typesense_memory_active_bytes",
-        ])
-        .set(
-            ts_metrics
-                .typesense_memory_active_bytes
-                .parse()
-                .unwrap_or(0.0),
-        );
-    typesense_metrics
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "typesense_memory_allocated_bytes",
-        ])
-        .set(
-            ts_metrics
-                .typesense_memory_allocated_bytes
-                .parse()
-                .unwrap_or(0.0),
-        );
-    typesense_metrics
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "typesense_memory_fragmentation_ratio",
-        ])
-        .set(
-            ts_metrics
-                .typesense_memory_fragmentation_ratio
-                .parse()
-                .unwrap_or(0.0),
-        );
-    typesense_metrics
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "typesense_memory_mapped_bytes",
-        ])
-        .set(
-            ts_metrics
-                .typesense_memory_mapped_bytes
-                .parse()
-                .unwrap_or(0.0),
-        );
-    typesense_metrics
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "typesense_memory_metadata_bytes",
-        ])
-        .set(
-            ts_metrics
-                .typesense_memory_metadata_bytes
-                .parse()
-                .unwrap_or(0.0),
-        );
-    typesense_metrics
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "typesense_memory_resident_bytes",
-        ])
-        .set(
-            ts_metrics
-                .typesense_memory_resident_bytes
-                .parse()
-                .unwrap_or(0.0),
-        );
-    typesense_metrics
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "typesense_memory_retained_bytes",
-        ])
-        .set(
-            ts_metrics
-                .typesense_memory_retained_bytes
-                .parse()
-                .unwrap_or(0.0),
-        );
-
-    let typesense_stats = register_gauge_vec_with_registry!(
-        "typesense_stats",
-        "Data received through the stats api of typesense",
-        &["host", "port", "key"],
-        registry
-    )
-    .unwrap();
-
-    typesense_stats
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "delete_latency_ms",
-        ])
-        .set(ts_stats.delete_latency_ms);
-    typesense_stats
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "delete_requests_per_second",
-        ])
-        .set(ts_stats.delete_requests_per_second);
-    typesense_stats
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "import_latency_ms",
-        ])
-        .set(ts_stats.import_latency_ms);
-    typesense_stats
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "import_requests_per_second",
-        ])
-        .set(ts_stats.import_requests_per_second);
-    typesense_stats
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "overloaded_requests_per_second",
-        ])
-        .set(ts_stats.overloaded_requests_per_second);
-    typesense_stats
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "pending_write_batches",
-        ])
-        .set(ts_stats.pending_write_batches);
-    typesense_stats
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "search_latency_ms",
-        ])
-        .set(ts_stats.search_latency_ms);
-    typesense_stats
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "search_requests_per_second",
-        ])
-        .set(ts_stats.search_requests_per_second);
-    typesense_stats
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "total_requests_per_second",
-        ])
-        .set(ts_stats.total_requests_per_second);
-    typesense_stats
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "write_latency_ms",
-        ])
-        .set(ts_stats.write_latency_ms);
-    typesense_stats
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-            "write_requests_per_second",
-        ])
-        .set(ts_stats.write_requests_per_second);
-
-    let typesense_stats_latency_ms = register_gauge_vec_with_registry!(
-        "typesense_stats_latency_ms",
-        "Each endpoint latency in ms from stats api",
-        &["host", "port", "key"],
-        registry
-    )
-    .unwrap();
-
-    let typesense_stats_latency_ms_by_collection = register_gauge_vec_with_registry!(
-        "typesense_stats_latency_ms_by_collection",
-        "Each endpoint latency in ms from stats api",
-        &["host", "port", "key", "method", "collection_name", "action"],
-        registry
-    )
-    .unwrap();
-    for (key, value) in ts_stats.latency_ms.iter() {
-        typesense_stats_latency_ms
-            .with_label_values(&[
-                &cli_args.typesense_host,
-                &cli_args.typesense_port.to_string(),
-                key,
-            ])
-            .set(value.to_string().parse::<f64>().unwrap_or(0.0));
-
-        match parse_collection_action_line(key) {
-            Some((method, collection_name, action)) => {
-                println!("Method: {}", method);
-                println!("Collection Name: {}", collection_name);
-                println!("Action: {}", action);
-
-                typesense_stats_latency_ms_by_collection
-                    .with_label_values(&[
-                        &cli_args.typesense_host,
-                        &cli_args.typesense_port.to_string(),
-                        key,
-                        method.as_str(),
-                        collection_name.as_str(),
-                        action.as_str(),
-                    ])
-                    .set(value.to_string().parse::<f64>().unwrap_or(0.0));
-            }
-            None => {
-                println!("No match found");
-            }
-        }
-    }
-
-    let typesense_stats_requests_per_second = register_gauge_vec_with_registry!(
-        "typesense_stats_requests_per_second",
-        "Each endpoint rps from stats api",
-        &["host", "port", "key"],
-        registry
-    )
-    .unwrap();
-
-    let typesense_stats_requests_per_second_by_collection = register_gauge_vec_with_registry!(
-        "typesense_stats_requests_per_second_by_collection",
-        "Each endpoint rps from stats api",
-        &["host", "port", "key", "method", "collection_name", "action"],
-        registry
-    )
-    .unwrap();
-
-    for (key, value) in ts_stats.requests_per_second.iter() {
-        typesense_stats_requests_per_second
-            .with_label_values(&[
-                &cli_args.typesense_host,
-                &cli_args.typesense_port.to_string(),
-                key,
-            ])
-            .set(value.to_string().parse::<f64>().unwrap_or(0.0));
-
-        match parse_collection_action_line(key) {
-            Some((method, collection_name, action)) => {
-                // println!("Method: {}", method);
-                // println!("Collection Name: {}", collection_name);
-                // println!("Action: {}", action);
-
-                typesense_stats_requests_per_second_by_collection
-                    .with_label_values(&[
-                        &cli_args.typesense_host,
-                        &cli_args.typesense_port.to_string(),
-                        key,
-                        method.as_str(),
-                        collection_name.as_str(),
-                        action.as_str(),
-                    ])
-                    .set(value.to_string().parse::<f64>().unwrap_or(0.0));
-            }
-            None => {
-                // println!("No match found");
-            }
-        }
-    }
-
-    let typesense_health = register_gauge_vec_with_registry!(
-        "typesense_health",
-        "Health status of Typesense instance (1 = healthy, 0 = unhealthy)",
-        &["host", "port"],
-        registry
-    )
-    .unwrap();
-
-    typesense_health
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-        ])
-        .set(if ts_health.ok { 1.0 } else { 0.0 });
-
-    let typesense_raft_state = register_gauge_vec_with_registry!(
-        "typesense_raft_state",
-        "Raft state of Typesense node (1 = leader, 4 = follower, 0 = other)",
-        &["host", "port"],
-        registry
-    )
-    .unwrap();
-
-    let state_value = match ts_debug.state {
-        1 => 1.0,
-        4 => 4.0,
-        _ => 0.0,
-    };
-
-    typesense_raft_state
-        .with_label_values(&[
-            &cli_args.typesense_host,
-            &cli_args.typesense_port.to_string(),
-        ])
-        .set(state_value);
-
-    let encoder = TextEncoder::new();
-    let metric_families = registry.gather();
-    let mut buffer = Vec::new();
-    encoder.encode(&metric_families, &mut buffer).unwrap();
-
-    String::from_utf8(buffer).unwrap()
+/// Results of one scrape of a Typesense node. Endpoints that failed are `None`
+/// and their metric families are omitted rather than reported as zeros.
+#[derive(Debug, Default)]
+pub struct Scrape {
+    pub metrics: Option<TypesenseMetrics>,
+    pub stats: Option<TypesenseStats>,
+    pub healthy: bool,
+    /// Raft role from `/debug`: 1 = leader, 4 = follower, 0 = other/unknown.
+    pub raft_state: i32,
 }
 
-fn parse_collection_action_line(input: &str) -> Option<(String, String, String)> {
-    let pattern = r"(\w+)\s+/collections/([^/]+)/([^/]+/[^/]+)";
-    let re = Regex::new(pattern).unwrap();
+/// Render a scrape in the Prometheus text exposition format.
+pub fn generate_metrics(scrape: &Scrape, host: &str, port: u16) -> String {
+    let registry = Registry::new();
+    let port = port.to_string();
 
-    re.captures(input).map(|caps| {
-        let method = caps.get(1).unwrap().as_str().to_string();
-        let collection_name = caps.get(2).unwrap().as_str().to_string();
-        let action = caps.get(3).unwrap().as_str().to_string();
-        (method, collection_name, action)
-    })
+    if let Some(metrics) = &scrape.metrics {
+        let ts_metrics = gauge(
+            &registry,
+            "typesense_metrics",
+            "Data received through the metrics api of typesense",
+            BASE_LABELS,
+        );
+        for (key, raw) in metrics.entries() {
+            ts_metrics
+                .with_label_values(&[host, &port, key])
+                .set(raw.parse().unwrap_or(0.0));
+        }
+    }
+
+    if let Some(stats) = &scrape.stats {
+        export_stats(&registry, stats, host, &port);
+    }
+
+    gauge(
+        &registry,
+        "typesense_health",
+        "Health status of Typesense instance (1 = healthy, 0 = unhealthy)",
+        TARGET_LABELS,
+    )
+    .with_label_values(&[host, &port])
+    .set(if scrape.healthy { 1.0 } else { 0.0 });
+
+    let raft_state = match scrape.raft_state {
+        state @ (1 | 4) => f64::from(state),
+        _ => 0.0,
+    };
+    gauge(
+        &registry,
+        "typesense_raft_state",
+        "Raft state of Typesense node (1 = leader, 4 = follower, 0 = other)",
+        TARGET_LABELS,
+    )
+    .with_label_values(&[host, &port])
+    .set(raft_state);
+
+    TextEncoder::new()
+        .encode_to_string(&registry.gather())
+        .expect("prometheus text encoding failed")
+}
+
+fn export_stats(registry: &Registry, stats: &TypesenseStats, host: &str, port: &str) {
+    let ts_stats = gauge(
+        registry,
+        "typesense_stats",
+        "Data received through the stats api of typesense",
+        BASE_LABELS,
+    );
+    for (key, value) in stats.entries() {
+        ts_stats.with_label_values(&[host, port, key]).set(value);
+    }
+
+    let per_endpoint = [
+        (
+            "typesense_stats_latency_ms",
+            "Each endpoint latency in ms from stats api",
+            &stats.latency_ms,
+        ),
+        (
+            "typesense_stats_requests_per_second",
+            "Each endpoint rps from stats api",
+            &stats.requests_per_second,
+        ),
+    ];
+    for (name, help, values) in per_endpoint {
+        let by_endpoint = gauge(registry, name, help, BASE_LABELS);
+        let by_collection = gauge(
+            registry,
+            &format!("{name}_by_collection"),
+            help,
+            COLLECTION_LABELS,
+        );
+        export_per_endpoint(values, host, port, &by_endpoint, &by_collection);
+    }
+}
+
+fn export_per_endpoint(
+    values: &Map<String, Value>,
+    host: &str,
+    port: &str,
+    by_endpoint: &GaugeVec,
+    by_collection: &GaugeVec,
+) {
+    for (key, value) in values {
+        let value = value.as_f64().unwrap_or(0.0);
+        by_endpoint.with_label_values(&[host, port, key]).set(value);
+
+        if let Some((method, collection, action)) = parse_collection_action(key) {
+            by_collection
+                .with_label_values(&[host, port, key, method, collection, action])
+                .set(value);
+        }
+    }
+}
+
+fn gauge(registry: &Registry, name: &str, help: &str, labels: &[&str]) -> GaugeVec {
+    let gauge = GaugeVec::new(Opts::new(name, help), labels).expect("invalid metric definition");
+    registry
+        .register(Box::new(gauge.clone()))
+        .expect("duplicate metric registration");
+    gauge
+}
+
+/// Split `"GET /collections/books/documents/search"` into
+/// `("GET", "books", "documents/search")`.
+fn parse_collection_action(input: &str) -> Option<(&str, &str, &str)> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        Regex::new(r"(\w+)\s+/collections/([^/]+)/([^/]+/[^/]+)").expect("valid regex")
+    });
+
+    let caps = re.captures(input)?;
+    Some((
+        caps.get(1)?.as_str(),
+        caps.get(2)?.as_str(),
+        caps.get(3)?.as_str(),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_collection_endpoint() {
+        assert_eq!(
+            parse_collection_action("GET /collections/books/documents/search"),
+            Some(("GET", "books", "documents/search"))
+        );
+        assert_eq!(parse_collection_action("GET /health"), None);
+    }
+
+    #[test]
+    fn exports_all_metric_families() {
+        let stats: TypesenseStats = serde_json::from_value(serde_json::json!({
+            "cache_hit_ratio": 0.75, "delete_latency_ms": 1.5, "delete_requests_per_second": 0, "import_latency_ms": 0,
+            "import_requests_per_second": 0, "overloaded_requests_per_second": 0,
+            "pending_write_batches": 0, "search_latency_ms": 0, "search_requests_per_second": 0,
+            "total_requests_per_second": 0, "write_latency_ms": 0, "write_requests_per_second": 0,
+            "latency_ms": { "GET /collections/books/documents/search": 9.5 },
+            "requests_per_second": { "GET /health": 0.4 }
+        }))
+        .unwrap();
+        let metrics: TypesenseMetrics = serde_json::from_str(
+            r#"{"system_cpu1_active_percentage": "12.5", "system_cpu16_active_percentage": "3",
+                "system_cpuX_active_percentage": "9", "system_memory_used_swap_bytes": "42",
+                "some_future_field": "1"}"#,
+        )
+        .unwrap();
+
+        let scrape = Scrape {
+            metrics: Some(metrics),
+            stats: Some(stats),
+            healthy: true,
+            raft_state: 4,
+        };
+        let out = generate_metrics(&scrape, "ts.local", 8108);
+
+        assert!(out.contains(
+            r#"typesense_metrics{host="ts.local",key="system_cpu1_active_percentage",port="8108"} 12.5"#
+        ));
+        assert!(out.contains(
+            r#"typesense_metrics{host="ts.local",key="system_cpu16_active_percentage",port="8108"} 3"#
+        ));
+        assert!(
+            !out.contains("system_cpu4_active_percentage"),
+            "absent cores are not exported"
+        );
+        assert!(
+            !out.contains("system_memory_total_swap_bytes"),
+            "metrics Typesense did not report are not exported"
+        );
+        assert!(
+            !out.contains("system_cpuX_"),
+            "only numbered cores are exported"
+        );
+        assert!(!out.contains("some_future_field"));
+        assert!(out.contains(
+            r#"typesense_metrics{host="ts.local",key="system_memory_used_swap_bytes",port="8108"} 42"#
+        ));
+        assert!(out.contains(
+            r#"typesense_stats{host="ts.local",key="cache_hit_ratio",port="8108"} 0.75"#
+        ));
+        assert!(out.contains(
+            r#"typesense_stats{host="ts.local",key="delete_latency_ms",port="8108"} 1.5"#
+        ));
+        assert!(out.contains(r#"collection_name="books""#));
+        assert!(out.contains(r#"typesense_stats_requests_per_second{host="ts.local",key="GET /health",port="8108"} 0.4"#));
+        assert!(out.contains(r#"typesense_health{host="ts.local",port="8108"} 1"#));
+        assert!(out.contains(r#"typesense_raft_state{host="ts.local",port="8108"} 4"#));
+    }
+
+    #[test]
+    fn failed_endpoints_are_omitted_not_zeroed() {
+        let out = generate_metrics(&Scrape::default(), "ts.local", 8108);
+
+        assert!(!out.contains("typesense_metrics{"));
+        assert!(!out.contains("typesense_stats{"));
+        assert!(out.contains(r#"typesense_health{host="ts.local",port="8108"} 0"#));
+        assert!(out.contains(r#"typesense_raft_state{host="ts.local",port="8108"} 0"#));
+    }
+
+    #[test]
+    fn unknown_raft_states_are_reported_as_zero() {
+        for (state, expected) in [(1, "1"), (4, "4"), (2, "0"), (-1, "0")] {
+            let scrape = Scrape {
+                raft_state: state,
+                ..Scrape::default()
+            };
+            let out = generate_metrics(&scrape, "h", 1);
+            assert!(
+                out.contains(&format!(
+                    r#"typesense_raft_state{{host="h",port="1"}} {expected}"#
+                )),
+                "state {state}"
+            );
+        }
+    }
+
+    #[test]
+    fn unparseable_values_are_exported_as_zero() {
+        let metrics: TypesenseMetrics =
+            serde_json::from_str(r#"{"system_disk_used_bytes": "n/a"}"#).unwrap();
+        let stats: TypesenseStats = serde_json::from_str(
+            r#"{"latency_ms": {"POST /collections/a/documents/import": "slow"}}"#,
+        )
+        .unwrap();
+        let scrape = Scrape {
+            metrics: Some(metrics),
+            stats: Some(stats),
+            ..Scrape::default()
+        };
+        let out = generate_metrics(&scrape, "h", 1);
+
+        assert!(
+            out.contains(r#"typesense_metrics{host="h",key="system_disk_used_bytes",port="1"} 0"#)
+        );
+        assert!(out.contains(r#"action="documents/import",collection_name="a""#));
+    }
+
+    #[test]
+    fn non_collection_paths_skip_by_collection_metrics() {
+        for path in ["GET /health", "GET /collections", "GET /collections/books"] {
+            assert_eq!(parse_collection_action(path), None, "{path}");
+        }
+        assert_eq!(
+            parse_collection_action("DELETE /collections/books/documents/42"),
+            Some(("DELETE", "books", "documents/42"))
+        );
+    }
+
+    #[test]
+    fn output_has_help_and_type_lines() {
+        let out = generate_metrics(&Scrape::default(), "h", 1);
+
+        assert!(out.contains("# HELP typesense_health "));
+        assert!(out.contains("# TYPE typesense_health gauge"));
+        assert!(out.contains("# TYPE typesense_raft_state gauge"));
+    }
 }

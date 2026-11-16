@@ -1,0 +1,22 @@
+{
+  "cache_hit_ratio": 0.25,
+  "delete_latency_ms": 0,
+  "delete_requests_per_second": 0,
+  "import_latency_ms": 0,
+  "import_requests_per_second": 0,
+  "latency_ms": {
+    "GET /collections/products/documents/search": 1.5,
+    "GET /health": 0.1
+  },
+  "overloaded_requests_per_second": 0,
+  "pending_write_batches": 0,
+  "requests_per_second": {
+    "GET /collections/products/documents/search": 3.4,
+    "GET /health": 0.2
+  },
+  "search_latency_ms": 1.5,
+  "search_requests_per_second": 3.4,
+  "total_requests_per_second": 3.6,
+  "write_latency_ms": 0,
+  "write_requests_per_second": 0
+}

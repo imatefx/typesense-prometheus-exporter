@@ -28,6 +28,12 @@
       "id": "timeseries",
       "name": "Time series",
       "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "stat",
+      "name": "Stat",
+      "version": ""
     }
   ],
   "annotations": {
@@ -157,7 +163,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_stats{key=\"total_requests_per_second\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -250,7 +256,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_stats{key=\"write_requests_per_second\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -343,7 +349,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_stats{key=\"search_requests_per_second\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -436,7 +442,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_stats{key=\"import_requests_per_second\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -529,7 +535,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_stats{key=\"delete_requests_per_second\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -622,7 +628,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_stats{key=\"overloaded_requests_per_second\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -696,7 +702,7 @@
               }
             ]
           },
-          "unit": "dtdurationms"
+          "unit": "ms"
         },
         "overrides": []
       },
@@ -727,7 +733,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_stats{key=\"import_latency_ms\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -788,7 +794,7 @@
               }
             ]
           },
-          "unit": "dtdurationms"
+          "unit": "ms"
         },
         "overrides": []
       },
@@ -819,7 +825,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_stats{key=\"search_latency_ms\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -880,7 +886,7 @@
               }
             ]
           },
-          "unit": "dtdurationms"
+          "unit": "ms"
         },
         "overrides": []
       },
@@ -911,7 +917,7 @@
           },
           "editorMode": "builder",
           "expr": "typesense_stats{key=\"write_latency_ms\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
@@ -972,7 +978,7 @@
               }
             ]
           },
-          "unit": "dtdurationms"
+          "unit": "ms"
         },
         "overrides": []
       },
@@ -1003,12 +1009,291 @@
           },
           "editorMode": "builder",
           "expr": "typesense_stats{key=\"delete_latency_ms\"}",
-          "legendFormat": "{{key}}",
+          "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
         }
       ],
       "title": "Delete Latency",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 42
+      },
+      "id": 220,
+      "title": "Health & Cache",
+      "type": "row",
+      "panels": []
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "id": 221,
+      "title": "Health",
+      "type": "stat",
+      "description": "",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 43
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "Healthy",
+                  "color": "green",
+                  "index": 0
+                },
+                "0": {
+                  "text": "Unhealthy",
+                  "color": "red",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "typesense_health",
+          "interval": "",
+          "legendFormat": "{{host}}",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "id": 222,
+      "title": "Raft State",
+      "type": "stat",
+      "description": "Alert when no node in the cluster reports Leader.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 43
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "Leader",
+                  "color": "green",
+                  "index": 0
+                },
+                "4": {
+                  "text": "Follower",
+                  "color": "blue",
+                  "index": 1
+                },
+                "0": {
+                  "text": "Unknown",
+                  "color": "red",
+                  "index": 2
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "typesense_raft_state",
+          "interval": "",
+          "legendFormat": "{{host}}",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 43
+      },
+      "id": 223,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "typesense_stats{key=\"cache_hit_ratio\"}",
+          "interval": "",
+          "legendFormat": "{{host}}",
+          "range": true,
+          "refId": "cache_hit_ratio"
+        }
+      ],
+      "title": "Cache Hit Ratio",
       "type": "timeseries"
     }
   ],

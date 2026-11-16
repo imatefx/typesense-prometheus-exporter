@@ -1,0 +1,15 @@
+# The e2e scenarios stop and pause nodes of a shared docker compose cluster,
+# so they must never run concurrently.
+[test-groups]
+e2e = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = "binary(e2e)"
+test-group = "e2e"
+slow-timeout = { period = "120s", terminate-after = 5 }
+
+[profile.ci]
+fail-fast = false
+
+[profile.ci.junit]
+path = "junit.xml"

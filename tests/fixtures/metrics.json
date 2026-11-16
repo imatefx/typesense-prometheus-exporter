@@ -1,0 +1,20 @@
+{
+  "system_cpu1_active_percentage": "9.09",
+  "system_cpu2_active_percentage": "0.00",
+  "system_cpu_active_percentage": "4.55",
+  "system_disk_total_bytes": "102888095744",
+  "system_disk_used_bytes": "4177268736",
+  "system_memory_total_bytes": "2084032512",
+  "system_memory_used_bytes": "345919488",
+  "system_memory_total_swap_bytes": "1073741824",
+  "system_memory_used_swap_bytes": "0",
+  "system_network_received_bytes": "1466",
+  "system_network_sent_bytes": "182",
+  "typesense_memory_active_bytes": "29540352",
+  "typesense_memory_allocated_bytes": "27084840",
+  "typesense_memory_fragmentation_ratio": "0.08",
+  "typesense_memory_mapped_bytes": "69488640",
+  "typesense_memory_metadata_bytes": "4224016",
+  "typesense_memory_resident_bytes": "29540352",
+  "typesense_memory_retained_bytes": "25645056"
+}

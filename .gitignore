@@ -1,4 +1,13 @@
+# Build output
+/target
+/releases
 
-#sublime text files
+# Editors / OS
 .sublime_workspaces/
-target
+.DS_Store
+
+# Local agent state
+.omc/
+lcov.info
+.playwright-mcp/
+junit.xml

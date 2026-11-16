@@ -1,0 +1,90 @@
+# Changelog
+
+All notable changes to this project are documented here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
+[Semantic Versioning](https://semver.org/).
+
+## [0.2.0] - 2026-11-16
+
+A rewrite of the exporter's internals, plus cluster monitoring, new metrics,
+dashboards, a local stack and a full test suite. Metric names and labels from
+0.1.x are unchanged; see **Changed** for behaviour differences.
+
+### Added
+- `typesense_health`: 1 when the node's `/health` reports `{"ok": true}`, otherwise 0. ([#13], Andrii Maryskevych)
+- `typesense_raft_state`: 1 = leader, 4 = follower, 0 = other or unreachable. ([#13], Andrii Maryskevych)
+- `--typesense-timeout` / `TYPESENSE_TIMEOUT`: per-request timeout for Typesense calls. ([#13], Andrii Maryskevych)
+- Per-core CPU metrics for every core Typesense reports. 0.1.x stopped at core 4 and ignored cores 5–8. ([#15], cyppe)
+- Swap metrics: `system_memory_total_swap_bytes` and `system_memory_used_swap_bytes`. ([#15], cyppe)
+- `cache_hit_ratio` in `typesense_stats`, exported when Typesense reports it (v28+). ([#15], cyppe)
+- Grafana panels for:
+  - health and raft state per node
+  - cache hit ratio
+  - swap usage
+  - per-core CPU
+- Prometheus alert rules: `TypesenseExporterDown`, `TypesenseUnhealthy` and `TypesenseNoLeader`.
+- A Docker Compose stack: a 3-node Typesense cluster, one exporter per node, and Prometheus and Grafana, both provisioned. Plus `scripts/traffic.sh` to generate load.
+- Tests:
+  - unit tests
+  - integration tests against a mock Typesense
+  - Rust end-to-end tests against the 3-node cluster, covering failover, a hung node and quorum loss
+  - coverage reporting
+- CI: lint, tests with coverage (90% minimum), e2e with a JUnit report, and a coverage badge.
+- `build-cross.sh`: builds static linux/amd64 and linux/arm64 binaries.
+- Docs: getting started, configuration, architecture, metrics and testing.
+
+### Changed
+- **Failed endpoints are omitted, not zeroed.** If Typesense is unreachable, times out or rejects the API key, that endpoint's metrics are left out of the scrape. Before, they were reported as 0, or the request panicked. `/metrics` always returns 200, and health and raft state drop to 0.
+- **Unreported values are omitted.** Metrics that Typesense doesn't include in its response (e.g. swap on older versions) are left out instead of exported as 0.
+- `TYPESENSE_TIMEOUT` defaults to 5s, and 0 or less disables it. Keep it below Prometheus' `scrape_timeout`.
+- One shared HTTP client, and the regex is compiled once, instead of both being rebuilt on every scrape.
+- Logging goes through `tracing`; the per-scrape debug output is gone.
+- reqwest uses rustls, so there's no OpenSSL dependency.
+- Docker image built with Rust 1.88 for linux/amd64 and linux/arm64.
+- Grafana legends name the node, so clusters are readable, and sub-millisecond latencies no longer show as 0.
+
+### Fixed
+- Scrapes no longer fail on hosts that don't report `system_cpu1_active_percentage` or `system_cpu_active_percentage`. ([#11], weriomat)
+- A request error, an unexpected status or a malformed response no longer crashes the scrape.
+
+## [0.1.5] - 2025-07-03
+### Added
+- Multi-platform Docker images (linux/amd64 and linux/arm64). ([#10], Andrii Maryskevych)
+- MIT license.
+
+## [0.1.4] - 2024-05-06
+### Changed
+- Docker publishing workflow adjustments.
+
+## [0.1.3] - 2024-05-06
+### Added
+- GitHub workflow publishing the Docker image to Docker Hub on release.
+
+## [0.1.2] - 2024-05-06
+### Added
+- Grafana dashboards and screenshots.
+### Fixed
+- The stats endpoint used a hardcoded protocol instead of `--typesense-protocol`. ([#4], Leandro)
+
+## [0.1.1] - 2024-01-18
+### Added
+- Per-collection latency and request-rate metrics.
+- Graceful shutdown.
+- Dockerfile.
+
+## [0.1.0] - 2024-01-17
+### Added
+- First release: exports Typesense `/metrics.json` and `/stats.json` in Prometheus format.
+
+[0.2.0]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.1.5...v0.2.0
+[0.1.5]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.1.4...v0.1.5
+[0.1.4]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.1.3...v0.1.4
+[0.1.3]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.1.2...v0.1.3
+[0.1.2]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/imatefx/typesense-prometheus-exporter/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/imatefx/typesense-prometheus-exporter/releases/tag/v0.1.0
+[#4]: https://github.com/imatefx/typesense-prometheus-exporter/pull/4
+[#10]: https://github.com/imatefx/typesense-prometheus-exporter/pull/10
+[#11]: https://github.com/imatefx/typesense-prometheus-exporter/pull/11
+[#13]: https://github.com/imatefx/typesense-prometheus-exporter/pull/13
+[#15]: https://github.com/imatefx/typesense-prometheus-exporter/pull/15

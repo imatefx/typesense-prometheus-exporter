@@ -1,51 +1,58 @@
 use std::sync::Arc;
 
-use crate::prometheus_exp;
-use crate::{
-    cli::CliArgs,
-    typesense::{
-        stats::get_typesense_stats,
-        metrics::get_typesense_metrics,
-        health::get_typesense_health,
-        debug::get_typesense_debug,
-    },
-};
-
-use axum::extract::State;
-use axum::{routing::get, Router};
-use futures::future;
+use axum::{extract::State, routing::get, Router};
 use tokio::signal;
 
-pub(crate) async fn start_metrics_server(args: CliArgs) {
-    tracing_subscriber::fmt::init();
+use crate::{
+    cli::CliArgs,
+    prometheus_exp::{self, Scrape},
+    typesense::TypesenseClient,
+};
 
-    let shared_cli_args: Arc<CliArgs> = Arc::new(args.clone());
+struct AppState {
+    client: TypesenseClient,
+    host: String,
+    port: u16,
+}
 
-    let app = Router::new()
+/// Build the exporter's HTTP router for the Typesense node described by `args`.
+pub fn router(args: &CliArgs) -> reqwest::Result<Router> {
+    let state = Arc::new(AppState {
+        client: TypesenseClient::new(args)?,
+        host: args.typesense_host.clone(),
+        port: args.typesense_port,
+    });
+
+    Ok(Router::new()
         .route("/", get(root))
-        .route("/metrics", get(metrics_route_handler))
-        .with_state(shared_cli_args);
+        .route("/metrics", get(metrics_handler))
+        .with_state(state))
+}
+
+/// Bind to the configured address and serve until SIGINT/SIGTERM.
+pub async fn run(args: CliArgs) -> std::io::Result<()> {
+    let app = router(&args).map_err(std::io::Error::other)?;
 
     let bind_address = format!("{}:{}", args.exporter_bind_address, args.exporter_bind_port);
-    println!("Starting exporter server at {:?}", bind_address);
-    let listener = tokio::net::TcpListener::bind(bind_address).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(&bind_address).await?;
+    tracing::info!("exporter listening on {bind_address}");
+
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
-        .unwrap();
 }
 
 async fn shutdown_signal() {
     let ctrl_c = async {
         signal::ctrl_c()
             .await
-            .expect("failed to run Ctrl+C handler");
+            .expect("failed to install Ctrl+C handler");
     };
 
     #[cfg(unix)]
     let terminate = async {
         signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to run signal handler")
+            .expect("failed to install SIGTERM handler")
             .recv()
             .await;
     };
@@ -60,23 +67,33 @@ async fn shutdown_signal() {
 }
 
 async fn root() -> &'static str {
-    "Hello, World!"
+    "Typesense Prometheus Exporter. Metrics are served at /metrics\n"
 }
 
-async fn metrics_route_handler(State(args): State<Arc<CliArgs>>) -> String {
-    let (metrics_data, stats_data, health_data, debug_data) = tokio::join!(
-        get_typesense_metrics(args.clone()),
-        get_typesense_stats(args.clone()),
-        get_typesense_health(args.clone()),
-        get_typesense_debug(args.clone()),
+/// Scrape Typesense and render metrics. Each endpoint is fetched concurrently;
+/// a failed endpoint is logged and its metrics are omitted, while
+/// `typesense_health` and `typesense_raft_state` drop to 0.
+async fn metrics_handler(State(state): State<Arc<AppState>>) -> String {
+    let client = &state.client;
+    let (metrics, stats, health, debug) = tokio::join!(
+        client.metrics(),
+        client.stats(),
+        client.health(),
+        client.debug()
     );
 
-    prometheus_exp::generate_metrics(
-        metrics_data.unwrap().clone(),
-        stats_data.unwrap().clone(),
-        health_data.unwrap().clone(),
-        debug_data.unwrap().clone(),
-        args.clone(),
-    )
-    .await
+    let scrape = Scrape {
+        metrics: log_failure("/metrics.json", metrics),
+        stats: log_failure("/stats.json", stats),
+        healthy: log_failure("/health", health).is_some_and(|h| h.ok),
+        raft_state: log_failure("/debug", debug).map_or(0, |d| d.state),
+    };
+
+    prometheus_exp::generate_metrics(&scrape, &state.host, state.port)
+}
+
+fn log_failure<T>(endpoint: &str, result: reqwest::Result<T>) -> Option<T> {
+    result
+        .inspect_err(|err| tracing::warn!("typesense {endpoint} failed: {err}"))
+        .ok()
 }
