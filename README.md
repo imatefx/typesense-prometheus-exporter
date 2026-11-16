@@ -151,6 +151,7 @@ Then import the [dashboards](grafana/) and [alert rules](deploy/prometheus/alert
 | `--exporter-bind-port` | `EXPORTER_BIND_PORT` | `8888` |
 | `--metric-names` | `TYPESENSE_METRIC_NAMES` | `v1` (`both` or `legacy` keep the 0.4 names; see [migrating](docs/migrating-to-1.0.md)) |
 | `--probe-allowed-targets` | `TYPESENSE_PROBE_ALLOWED_TARGETS` | *(empty)*: comma-separated `host[:port]` nodes `/probe?target=` may scrape, or `*` for any |
+| `--probe-max-concurrency` | `TYPESENSE_PROBE_MAX_CONCURRENCY` | `16`: most `/probe` scrapes running at once; more wait for a slot |
 
 See [configuration](docs/configuration.md) for API key permissions, timeouts, failure behaviour, Prometheus and Grafana setup.
 
