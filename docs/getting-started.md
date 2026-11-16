@@ -163,7 +163,7 @@ Check it with `curl -s 'localhost:8888/probe?target=typesense-1.internal' | grep
 
 ### 3. Import the Grafana dashboards
 
-In Grafana, go to **Dashboards → New → Import** and upload each file from [`grafana/`](../grafana). Pick your Prometheus data source when asked.
+In Grafana, go to **Dashboards → New → Import**, enter each grafana.com ID and click **Load**: **26064** (Cluster Overview), **26065** (Stats), **26066** (Metrics) and **26067** (By Collection). Pick your Prometheus data source when asked. Without internet access, upload the files from [`grafana/`](../grafana) instead.
 
 ### Troubleshooting
 
