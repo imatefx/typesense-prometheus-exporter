@@ -162,7 +162,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "builder",
-          "expr": "typesense_stats{key=\"total_requests_per_second\"}",
+          "expr": "typesense_stats{host=~\"$host\",key=\"total_requests_per_second\"}",
           "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
@@ -255,7 +255,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "builder",
-          "expr": "typesense_stats{key=\"write_requests_per_second\"}",
+          "expr": "typesense_stats{host=~\"$host\",key=\"write_requests_per_second\"}",
           "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
@@ -348,7 +348,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "builder",
-          "expr": "typesense_stats{key=\"search_requests_per_second\"}",
+          "expr": "typesense_stats{host=~\"$host\",key=\"search_requests_per_second\"}",
           "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
@@ -441,7 +441,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "builder",
-          "expr": "typesense_stats{key=\"import_requests_per_second\"}",
+          "expr": "typesense_stats{host=~\"$host\",key=\"import_requests_per_second\"}",
           "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
@@ -534,7 +534,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "builder",
-          "expr": "typesense_stats{key=\"delete_requests_per_second\"}",
+          "expr": "typesense_stats{host=~\"$host\",key=\"delete_requests_per_second\"}",
           "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
@@ -627,7 +627,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "builder",
-          "expr": "typesense_stats{key=\"overloaded_requests_per_second\"}",
+          "expr": "typesense_stats{host=~\"$host\",key=\"overloaded_requests_per_second\"}",
           "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
@@ -731,15 +731,49 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "editorMode": "builder",
-          "expr": "typesense_stats{key=\"import_latency_ms\"}",
-          "legendFormat": "{{host}}",
+          "editorMode": "code",
+          "expr": "typesense_stats{host=~\"$host\",key=\"import_latency_ms\"}",
+          "legendFormat": "{{host}} · avg",
           "range": true,
-          "refId": "A"
+          "refId": "avg"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "typesense_stats{host=~\"$host\",key=\"import_95Percentile_latency_ms\"}",
+          "legendFormat": "{{host}} · p95",
+          "range": true,
+          "refId": "p95"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "typesense_stats{host=~\"$host\",key=\"import_99Percentile_latency_ms\"}",
+          "legendFormat": "{{host}} · p99",
+          "range": true,
+          "refId": "p99"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "typesense_stats{host=~\"$host\",key=\"import_max_latency_ms\"}",
+          "legendFormat": "{{host}} · max",
+          "range": true,
+          "refId": "max"
         }
       ],
       "title": "Import Latency",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Average, 95th and 99th percentile, and maximum import latency per node."
     },
     {
       "datasource": {
@@ -823,15 +857,49 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "editorMode": "builder",
-          "expr": "typesense_stats{key=\"search_latency_ms\"}",
-          "legendFormat": "{{host}}",
+          "editorMode": "code",
+          "expr": "typesense_stats{host=~\"$host\",key=\"search_latency_ms\"}",
+          "legendFormat": "{{host}} · avg",
           "range": true,
-          "refId": "A"
+          "refId": "avg"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "typesense_stats{host=~\"$host\",key=\"search_95Percentile_latency_ms\"}",
+          "legendFormat": "{{host}} · p95",
+          "range": true,
+          "refId": "p95"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "typesense_stats{host=~\"$host\",key=\"search_99Percentile_latency_ms\"}",
+          "legendFormat": "{{host}} · p99",
+          "range": true,
+          "refId": "p99"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "typesense_stats{host=~\"$host\",key=\"search_max_latency_ms\"}",
+          "legendFormat": "{{host}} · max",
+          "range": true,
+          "refId": "max"
         }
       ],
       "title": "Search Latency",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Average, 95th and 99th percentile, and maximum search latency per node."
     },
     {
       "datasource": {
@@ -915,15 +983,49 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "editorMode": "builder",
-          "expr": "typesense_stats{key=\"write_latency_ms\"}",
-          "legendFormat": "{{host}}",
+          "editorMode": "code",
+          "expr": "typesense_stats{host=~\"$host\",key=\"write_latency_ms\"}",
+          "legendFormat": "{{host}} · avg",
           "range": true,
-          "refId": "A"
+          "refId": "avg"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "typesense_stats{host=~\"$host\",key=\"write_95Percentile_latency_ms\"}",
+          "legendFormat": "{{host}} · p95",
+          "range": true,
+          "refId": "p95"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "typesense_stats{host=~\"$host\",key=\"write_99Percentile_latency_ms\"}",
+          "legendFormat": "{{host}} · p99",
+          "range": true,
+          "refId": "p99"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "typesense_stats{host=~\"$host\",key=\"write_max_latency_ms\"}",
+          "legendFormat": "{{host}} · max",
+          "range": true,
+          "refId": "max"
         }
       ],
       "title": "Write Latency",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Average, 95th and 99th percentile, and maximum write latency per node."
     },
     {
       "datasource": {
@@ -1007,15 +1109,49 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "editorMode": "builder",
-          "expr": "typesense_stats{key=\"delete_latency_ms\"}",
-          "legendFormat": "{{host}}",
+          "editorMode": "code",
+          "expr": "typesense_stats{host=~\"$host\",key=\"delete_latency_ms\"}",
+          "legendFormat": "{{host}} · avg",
           "range": true,
-          "refId": "A"
+          "refId": "avg"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "typesense_stats{host=~\"$host\",key=\"delete_95Percentile_latency_ms\"}",
+          "legendFormat": "{{host}} · p95",
+          "range": true,
+          "refId": "p95"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "typesense_stats{host=~\"$host\",key=\"delete_99Percentile_latency_ms\"}",
+          "legendFormat": "{{host}} · p99",
+          "range": true,
+          "refId": "p99"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "typesense_stats{host=~\"$host\",key=\"delete_max_latency_ms\"}",
+          "legendFormat": "{{host}} · max",
+          "range": true,
+          "refId": "max"
         }
       ],
       "title": "Delete Latency",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Average, 95th and 99th percentile, and maximum delete latency per node."
     },
     {
       "collapsed": false,
@@ -1026,180 +1162,9 @@
         "y": 42
       },
       "id": 220,
-      "title": "Health & Cache",
+      "title": "Cache",
       "type": "row",
       "panels": []
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "id": 221,
-      "title": "Health",
-      "type": "stat",
-      "description": "",
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 43
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [
-            {
-              "type": "value",
-              "options": {
-                "1": {
-                  "text": "Healthy",
-                  "color": "green",
-                  "index": 0
-                },
-                "0": {
-                  "text": "Unhealthy",
-                  "color": "red",
-                  "index": 1
-                }
-              }
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "green",
-                "value": 1
-              }
-            ]
-          },
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "textMode": "value_and_name",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "typesense_health",
-          "interval": "",
-          "legendFormat": "{{host}}",
-          "range": true,
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "id": 222,
-      "title": "Raft State",
-      "type": "stat",
-      "description": "Alert when no node in the cluster reports Leader.",
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 43
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [
-            {
-              "type": "value",
-              "options": {
-                "1": {
-                  "text": "Leader",
-                  "color": "green",
-                  "index": 0
-                },
-                "4": {
-                  "text": "Follower",
-                  "color": "blue",
-                  "index": 1
-                },
-                "0": {
-                  "text": "Unknown",
-                  "color": "red",
-                  "index": 2
-                }
-              }
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "green",
-                "value": 1
-              }
-            ]
-          },
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "textMode": "value_and_name",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "typesense_raft_state",
-          "interval": "",
-          "legendFormat": "{{host}}",
-          "range": true,
-          "refId": "A"
-        }
-      ]
     },
     {
       "datasource": {
@@ -1262,8 +1227,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
-        "x": 16,
+        "w": 12,
+        "x": 0,
         "y": 43
       },
       "id": 223,
@@ -1286,7 +1251,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_stats{key=\"cache_hit_ratio\"}",
+          "expr": "typesense_stats{host=~\"$host\",key=\"cache_hit_ratio\"}",
           "interval": "",
           "legendFormat": "{{host}}",
           "range": true,
@@ -1295,6 +1260,110 @@
       ],
       "title": "Cache Hit Ratio",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 43
+      },
+      "id": 224,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "typesense_stats{host=~\"$host\",key=\"cache_hit_count\"}",
+          "legendFormat": "{{host}} · hits",
+          "range": true,
+          "refId": "hits"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "typesense_stats{host=~\"$host\",key=\"cache_miss_count\"}",
+          "legendFormat": "{{host}} · misses",
+          "range": true,
+          "refId": "misses"
+        }
+      ],
+      "title": "Cache Hits and Misses",
+      "type": "timeseries",
+      "description": "Search cache hits and misses per node. Only searches with use_cache=true use the cache."
     }
   ],
   "refresh": "10s",
@@ -1302,7 +1371,39 @@
   "style": "dark",
   "tags": [],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "name": "host",
+        "label": "Node",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "definition": "label_values(typesense_health, host)",
+        "query": {
+          "query": "label_values(typesense_health, host)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "sort": 1,
+        "hide": 0,
+        "skipUrlSync": false
+      }
+    ]
   },
   "time": {
     "from": "now-6h",

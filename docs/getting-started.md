@@ -30,7 +30,7 @@ Things to try:
 # Who is the raft leader?
 curl -s localhost:8888/metrics localhost:8889/metrics localhost:8890/metrics | grep '^typesense_raft_state'
 
-# Kill a node and watch Grafana's Health & Cache row; a new leader takes over within seconds
+# Kill a node and watch the Cluster Overview dashboard: a new leader takes over within seconds
 docker compose stop typesense-1
 docker compose start typesense-1
 ```

@@ -5,7 +5,8 @@ use regex::Regex;
 use serde_json::{Map, Value};
 
 use crate::typesense::models::{
-    typesense_metrics_model::TypesenseMetrics, typesense_stats_model::TypesenseStats,
+    typesense_collection_model::TypesenseCollection, typesense_metrics_model::TypesenseMetrics,
+    typesense_stats_model::TypesenseStats, typesense_status_model::TypesenseStatus,
 };
 
 const BASE_LABELS: &[&str] = &["host", "port", "key"];
@@ -21,6 +22,10 @@ pub struct Scrape {
     pub healthy: bool,
     /// Raft role from `/debug`: 1 = leader, 4 = follower, 0 = other/unknown.
     pub raft_state: i32,
+    /// Typesense version from `/debug`.
+    pub version: Option<String>,
+    pub status: Option<TypesenseStatus>,
+    pub collections: Option<Vec<TypesenseCollection>>,
 }
 
 /// Render a scrape in the Prometheus text exposition format.
@@ -67,6 +72,53 @@ pub fn generate_metrics(scrape: &Scrape, host: &str, port: u16) -> String {
     )
     .with_label_values(&[host, &port])
     .set(raft_state);
+
+    if let Some(version) = &scrape.version {
+        gauge(
+            &registry,
+            "typesense_info",
+            "Typesense build information; always 1",
+            &["host", "port", "version"],
+        )
+        .with_label_values(&[host, &port, version])
+        .set(1.0);
+    }
+
+    if let Some(status) = &scrape.status {
+        let target = [host, port.as_str()];
+        for (name, help, value) in [
+            (
+                "typesense_raft_committed_index",
+                "Last raft log index committed on this node; compare across nodes for replication lag",
+                status.committed_index,
+            ),
+            (
+                "typesense_raft_queued_writes",
+                "Writes queued on this node waiting to be applied",
+                status.queued_writes,
+            ),
+        ] {
+            if let Some(value) = value {
+                gauge(&registry, name, help, TARGET_LABELS)
+                    .with_label_values(&target)
+                    .set(value);
+            }
+        }
+    }
+
+    if let Some(collections) = &scrape.collections {
+        let documents = gauge(
+            &registry,
+            "typesense_collection_documents",
+            "Number of documents in each collection",
+            &["host", "port", "collection"],
+        );
+        for c in collections {
+            if let Some(n) = c.num_documents {
+                documents.with_label_values(&[host, &port, &c.name]).set(n);
+            }
+        }
+    }
 
     TextEncoder::new()
         .encode_to_string(&registry.gather())
@@ -187,6 +239,7 @@ mod tests {
             stats: Some(stats),
             healthy: true,
             raft_state: 4,
+            ..Scrape::default()
         };
         let out = generate_metrics(&scrape, "ts.local", 8108);
 
@@ -290,5 +343,87 @@ mod tests {
         assert!(out.contains("# HELP typesense_health "));
         assert!(out.contains("# TYPE typesense_health gauge"));
         assert!(out.contains("# TYPE typesense_raft_state gauge"));
+    }
+
+    #[test]
+    fn exports_version_replication_and_collection_documents() {
+        let scrape = Scrape {
+            version: Some("30.1".into()),
+            status: Some(
+                serde_json::from_str(r#"{"committed_index": 18, "queued_writes": 2}"#).unwrap(),
+            ),
+            collections: Some(
+                serde_json::from_str(
+                    r#"[{"name": "products", "num_documents": 42}, {"name": "unknown"}]"#,
+                )
+                .unwrap(),
+            ),
+            ..Scrape::default()
+        };
+        let out = generate_metrics(&scrape, "h", 1);
+
+        assert!(out.contains(r#"typesense_info{host="h",port="1",version="30.1"} 1"#));
+        assert!(out.contains(r#"typesense_raft_committed_index{host="h",port="1"} 18"#));
+        assert!(out.contains(r#"typesense_raft_queued_writes{host="h",port="1"} 2"#));
+        assert!(out.contains(
+            r#"typesense_collection_documents{collection="products",host="h",port="1"} 42"#
+        ));
+        assert!(
+            !out.contains(r#"collection="unknown""#),
+            "collections without a count are skipped"
+        );
+    }
+
+    #[test]
+    fn new_families_are_omitted_when_their_endpoint_failed() {
+        let out = generate_metrics(&Scrape::default(), "h", 1);
+
+        for family in [
+            "typesense_info",
+            "typesense_raft_committed_index",
+            "typesense_raft_queued_writes",
+            "typesense_collection_documents",
+        ] {
+            assert!(
+                !out.contains(&format!("{family}{{")),
+                "{family} should be absent"
+            );
+        }
+    }
+
+    #[test]
+    fn status_fields_missing_from_older_typesense_are_omitted() {
+        let scrape = Scrape {
+            status: Some(serde_json::from_str(r#"{"state": "LEADER"}"#).unwrap()),
+            ..Scrape::default()
+        };
+        let out = generate_metrics(&scrape, "h", 1);
+
+        assert!(!out.contains("typesense_raft_committed_index{"));
+        assert!(!out.contains("typesense_raft_queued_writes{"));
+    }
+
+    #[test]
+    fn exports_latency_percentiles_and_cache_counts() {
+        let stats: TypesenseStats = serde_json::from_str(
+            r#"{"search_95Percentile_latency_ms": 4.5, "search_99Percentile_latency_ms": 7,
+                "write_max_latency_ms": 12, "cache_hit_count": 9, "cache_miss_count": 3}"#,
+        )
+        .unwrap();
+        let scrape = Scrape {
+            stats: Some(stats),
+            ..Scrape::default()
+        };
+        let out = generate_metrics(&scrape, "h", 1);
+
+        for line in [
+            r#"typesense_stats{host="h",key="search_95Percentile_latency_ms",port="1"} 4.5"#,
+            r#"typesense_stats{host="h",key="search_99Percentile_latency_ms",port="1"} 7"#,
+            r#"typesense_stats{host="h",key="write_max_latency_ms",port="1"} 12"#,
+            r#"typesense_stats{host="h",key="cache_hit_count",port="1"} 9"#,
+            r#"typesense_stats{host="h",key="cache_miss_count",port="1"} 3"#,
+        ] {
+            assert!(out.contains(line), "missing {line}");
+        }
     }
 }

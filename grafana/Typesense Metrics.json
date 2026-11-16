@@ -159,7 +159,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_metrics{key=\"system_cpu_active_percentage\"}",
+          "expr": "typesense_metrics{host=~\"$host\",key=\"system_cpu_active_percentage\"}",
           "interval": "",
           "legendFormat": "{{host}} · all cores",
           "range": true,
@@ -171,7 +171,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "label_replace(typesense_metrics{key=~\"system_cpu[0-9]+_active_percentage\"}, \"core\", \"$1\", \"key\", \"system_cpu([0-9]+)_active_percentage\")",
+          "expr": "label_replace(typesense_metrics{host=~\"$host\",key=~\"system_cpu[0-9]+_active_percentage\"}, \"core\", \"$1\", \"key\", \"system_cpu([0-9]+)_active_percentage\")",
           "interval": "",
           "legendFormat": "{{host}} · core {{core}}",
           "range": true,
@@ -266,7 +266,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "builder",
-          "expr": "typesense_metrics{key=\"system_disk_total_bytes\"}",
+          "expr": "typesense_metrics{host=~\"$host\",key=\"system_disk_total_bytes\"}",
           "format": "time_series",
           "legendFormat": "{{host}} · disk total",
           "range": true,
@@ -278,7 +278,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "builder",
-          "expr": "typesense_metrics{key=\"system_disk_used_bytes\"}",
+          "expr": "typesense_metrics{host=~\"$host\",key=\"system_disk_used_bytes\"}",
           "hide": false,
           "legendFormat": "{{host}} · disk used",
           "range": true,
@@ -372,7 +372,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "builder",
-          "expr": "typesense_metrics{key=\"system_memory_total_bytes\"}",
+          "expr": "typesense_metrics{host=~\"$host\",key=\"system_memory_total_bytes\"}",
           "legendFormat": "{{host}} · memory total",
           "range": true,
           "refId": "A"
@@ -383,7 +383,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "builder",
-          "expr": "typesense_metrics{key=\"system_memory_used_bytes\"}",
+          "expr": "typesense_metrics{host=~\"$host\",key=\"system_memory_used_bytes\"}",
           "hide": false,
           "legendFormat": "{{host}} · memory used",
           "range": true,
@@ -477,7 +477,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "builder",
-          "expr": "typesense_metrics{key=\"system_network_received_bytes\"}",
+          "expr": "typesense_metrics{host=~\"$host\",key=\"system_network_received_bytes\"}",
           "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
@@ -570,7 +570,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "builder",
-          "expr": "typesense_metrics{key=\"system_network_sent_bytes\"}",
+          "expr": "typesense_metrics{host=~\"$host\",key=\"system_network_sent_bytes\"}",
           "legendFormat": "{{host}}",
           "range": true,
           "refId": "A"
@@ -663,7 +663,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_metrics{key=\"system_memory_total_swap_bytes\"}",
+          "expr": "typesense_metrics{host=~\"$host\",key=\"system_memory_total_swap_bytes\"}",
           "interval": "",
           "legendFormat": "{{host}} · memory total swap",
           "range": true,
@@ -675,7 +675,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "typesense_metrics{key=\"system_memory_used_swap_bytes\"}",
+          "expr": "typesense_metrics{host=~\"$host\",key=\"system_memory_used_swap_bytes\"}",
           "interval": "",
           "legendFormat": "{{host}} · memory used swap",
           "range": true,
@@ -778,7 +778,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "builder",
-              "expr": "typesense_metrics{key=\"typesense_memory_active_bytes\"}",
+              "expr": "typesense_metrics{host=~\"$host\",key=\"typesense_memory_active_bytes\"}",
               "legendFormat": "{{host}}",
               "range": true,
               "refId": "A"
@@ -870,7 +870,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "builder",
-              "expr": "typesense_metrics{key=\"typesense_memory_metadata_bytes\"}",
+              "expr": "typesense_metrics{host=~\"$host\",key=\"typesense_memory_metadata_bytes\"}",
               "legendFormat": "{{host}}",
               "range": true,
               "refId": "A"
@@ -962,7 +962,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "builder",
-              "expr": "typesense_metrics{key=\"typesense_memory_fragmentation_ratio\"}",
+              "expr": "typesense_metrics{host=~\"$host\",key=\"typesense_memory_fragmentation_ratio\"}",
               "legendFormat": "{{host}}",
               "range": true,
               "refId": "A"
@@ -1054,7 +1054,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "builder",
-              "expr": "typesense_metrics{key=\"typesense_memory_mapped_bytes\"}",
+              "expr": "typesense_metrics{host=~\"$host\",key=\"typesense_memory_mapped_bytes\"}",
               "legendFormat": "{{host}}",
               "range": true,
               "refId": "A"
@@ -1146,7 +1146,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "builder",
-              "expr": "typesense_metrics{key=\"typesense_memory_retained_bytes\"}",
+              "expr": "typesense_metrics{host=~\"$host\",key=\"typesense_memory_retained_bytes\"}",
               "legendFormat": "{{host}}",
               "range": true,
               "refId": "A"
@@ -1238,7 +1238,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "builder",
-              "expr": "typesense_metrics{key=\"typesense_memory_resident_bytes\"}",
+              "expr": "typesense_metrics{host=~\"$host\",key=\"typesense_memory_resident_bytes\"}",
               "legendFormat": "{{host}}",
               "range": true,
               "refId": "A"
@@ -1330,7 +1330,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "builder",
-              "expr": "typesense_metrics{key=\"typesense_memory_allocated_bytes\"}",
+              "expr": "typesense_metrics{host=~\"$host\",key=\"typesense_memory_allocated_bytes\"}",
               "legendFormat": "{{host}}",
               "range": true,
               "refId": "A"
@@ -1349,7 +1349,39 @@
   "style": "dark",
   "tags": [],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "name": "host",
+        "label": "Node",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "definition": "label_values(typesense_health, host)",
+        "query": {
+          "query": "label_values(typesense_health, host)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "sort": 1,
+        "hide": 0,
+        "skipUrlSync": false
+      }
+    ]
   },
   "time": {
     "from": "now-30m",

@@ -25,16 +25,28 @@ Every option can be set as a command-line flag or as an environment variable. Th
 
 ## API key permissions
 
-On every scrape the exporter calls four Typesense endpoints:
+On every scrape the exporter calls six Typesense endpoints:
 
-| Endpoint | Used for | Needs a key |
+| Endpoint | Used for | Scoped-key action |
 |---|---|---|
-| `/metrics.json` | `typesense_metrics` | yes |
-| `/stats.json` | all `typesense_stats*` metrics | yes |
-| `/debug` | `typesense_raft_state` | yes |
-| `/health` | `typesense_health` | no |
+| `/metrics.json` | `typesense_metrics` | `metrics.json:list` |
+| `/stats.json` | all `typesense_stats*` metrics | `stats.json:list` |
+| `/debug` | `typesense_raft_state`, `typesense_info` | `debug:list` |
+| `/status` | `typesense_raft_committed_index`, `typesense_raft_queued_writes` | `status:list` |
+| `/collections` | `typesense_collection_documents` | `collections:list` |
+| `/health` | `typesense_health` | none |
 
-An admin key works. A [scoped key](https://typesense.org/docs/latest/api/api-keys.html) needs at least the `metrics.json:list`, `stats.json:list` and `debug:list` actions.
+An admin key works. A least-privilege [scoped key](https://typesense.org/docs/latest/api/api-keys.html) needs exactly the actions above:
+
+```bash
+curl -X POST "$TYPESENSE/keys" -H "X-TYPESENSE-API-KEY: $ADMIN_KEY" -d '{
+  "description": "prometheus exporter",
+  "actions": ["metrics.json:list", "stats.json:list", "debug:list", "status:list", "collections:list"],
+  "collections": ["*"]
+}'
+```
+
+A missing action only drops the metrics from that endpoint; the exporter logs the 401 and exports the rest.
 
 ## Timeouts
 
@@ -49,15 +61,16 @@ The exporter waits for Typesense before answering Prometheus. If a node hangs an
 
 ## Failure behaviour
 
-Each scrape calls the four Typesense endpoints concurrently, and each one succeeds or fails on its own.
+Each scrape calls the six Typesense endpoints concurrently, and each one succeeds or fails on its own.
 
 | Situation | What `/metrics` returns |
 |---|---|
 | Everything works | All metrics |
 | `/metrics.json` or `/stats.json` fails (unreachable, timeout, 401, bad JSON) | That endpoint's metrics are left out. They are **not** reported as 0. |
 | `/health` fails, or reports `ok: false` | `typesense_health 0` |
-| `/debug` fails | `typesense_raft_state 0` |
-| Typesense leaves a field out (e.g. `cache_hit_ratio` before v28) | That metric is left out |
+| `/debug` fails | `typesense_raft_state 0`, no `typesense_info` |
+| `/status` or `/collections` fails (e.g. older Typesense, missing key action) | Those metrics are left out |
+| Typesense leaves a field out (e.g. latency percentiles on older versions) | That metric is left out |
 
 Every failure is logged at `WARN` with the endpoint and the reason.
 
@@ -99,9 +112,12 @@ Import the dashboards from [`grafana/`](../grafana) (**Dashboards → New → Im
 
 | Dashboard | Shows |
 |---|---|
+| Typesense Cluster Overview | Unhealthy nodes, leader, documents, search rate, p95, cache ratio; per-node health, raft state and version; replication lag, commit rate, queued writes; traffic and tail latency |
 | Typesense Metrics | CPU (overall and per core), disk, memory, swap, network, Typesense allocator memory |
-| Typesense Stats | Requests per second and latency by operation; health, raft state and cache hit ratio |
-| Typesense By Collection | Requests per second and latency per collection, with a `collection` variable |
+| Typesense Stats | Requests per second, and latency (avg, p95, p99, max) by operation; cache hit ratio, hits and misses |
+| Typesense By Collection | Requests per second and latency per collection; documents per collection |
+
+Every dashboard has a **Node** filter (`host` variable) to focus on one or more nodes.
 
 ## Docker Compose stack
 

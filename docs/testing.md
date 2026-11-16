@@ -4,9 +4,9 @@ Three layers, from fast and isolated to slow and real:
 
 | Layer | Where | Runs against | Count | Time | Needs |
 |---|---|---|---|---|---|
-| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 18 | < 1s | Rust |
-| Integration | [`tests/exporter.rs`](../tests/exporter.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 13 | ~1s | Rust |
-| End-to-end | [`tests/e2e.rs`](../tests/e2e.rs) | A real 3-node Typesense cluster, exporters, Prometheus and Grafana in Docker | 7 | ~2–5 min | Rust, Docker |
+| Unit | `src/**` (`#[cfg(test)]`) | Plain functions | 21 | < 1s | Rust |
+| Integration | [`tests/exporter.rs`](../tests/exporter.rs) | The real HTTP server and a mock Typesense ([wiremock](https://docs.rs/wiremock)) | 15 | ~1s | Rust |
+| End-to-end | [`tests/e2e.rs`](../tests/e2e.rs) | A real 3-node Typesense cluster, exporters, Prometheus and Grafana in Docker | 8 | ~3–5 min | Rust, Docker |
 
 ```bash
 make test               # lint + unit + integration
@@ -32,6 +32,10 @@ A plain `cargo test` runs unit and integration tests only. The e2e tests sit beh
 | `unparseable_values_are_exported_as_zero` | A reported but non-numeric value (`"n/a"`) becomes 0, and a per-collection string value still gets its labels |
 | `non_collection_paths_skip_by_collection_metrics` | `/health`, `/collections` and `/collections/books` give no per-collection labels; `DELETE …/documents/42` does |
 | `output_has_help_and_type_lines` | Output has `# HELP` and `# TYPE … gauge` lines |
+| `exports_version_replication_and_collection_documents` | `typesense_info{version}`, committed index, queued writes and per-collection document counts are rendered; collections without a count are skipped |
+| `new_families_are_omitted_when_their_endpoint_failed` | No `/debug`, `/status` or `/collections` data means no info, raft index, queued writes or document metrics |
+| `status_fields_missing_from_older_typesense_are_omitted` | A `/status` without `committed_index` or `queued_writes` doesn't produce fake zeros |
+| `exports_latency_percentiles_and_cache_counts` | p95/p99, max latency and cache hit/miss counts are exported as `typesense_stats` keys |
 
 ### Models: `src/typesense/models/`
 
@@ -40,11 +44,10 @@ A plain `cargo test` runs unit and integration tests only. The e2e tests sit beh
 | `exports_every_numbered_core` | All 32 cores of a 32-core host are exported |
 | `ignores_non_core_and_non_string_values` | `system_cpuX_…`, keys with extra suffixes, non-string values and unrelated keys are not exported as cores |
 | `unreported_metrics_are_skipped` | Only the keys Typesense sent are exported; `{}` exports nothing |
-| `missing_fields_default_to_zero` | Missing stats fields don't fail parsing; `cache_hit_ratio` stays absent |
-| `entries_cover_every_scalar_stat` | All 12 scalar stats are exported when present |
-| `cache_hit_ratio_is_omitted_when_not_reported` | Typesense before v28 (no `cache_hit_ratio`) gives 11 stats, not a fake 0 |
-| `null_cache_hit_ratio_is_omitted` | `"cache_hit_ratio": null` is treated as absent |
-| `wrong_type_is_an_error` | A string where a number belongs fails parsing, so the endpoint is dropped |
+| `exports_every_numeric_field` | Every numeric `/stats.json` field is exported: averages, percentiles, max, cache counts, and fields the exporter has never seen |
+| `unreported_null_and_non_numeric_fields_are_omitted` | `null`, strings and missing fields are left out instead of becoming 0 |
+| `per_endpoint_maps_are_not_scalars` | `latency_ms` and `requests_per_second` (per-endpoint objects) aren't treated as scalar stats |
+| `parses_name_and_document_count_ignoring_the_schema` | `/collections` entries parse to name and `num_documents`, ignoring the schema; a missing count is `None` |
 
 ### CLI: `src/cli.rs`
 
@@ -60,9 +63,9 @@ Each test starts a [wiremock](https://docs.rs/wiremock) server playing a Typesen
 
 | Test | Scenario | Expected |
 |---|---|---|
-| `healthy_leader_exports_everything` | All four endpoints OK, raft leader | 200; health 1, raft 1, system, swap, cache and per-collection metrics |
+| `healthy_leader_exports_everything` | All six endpoints OK, raft leader | 200; health 1, raft 1, system, swap, cache and per-collection metrics |
 | `follower_reports_raft_state_four` | `/debug` reports state 4 | `typesense_raft_state 4` |
-| `sends_api_key_to_typesense` | Count the requests | Exactly 4 requests, each with `X-TYPESENSE-API-KEY` |
+| `sends_api_key_to_typesense` | Count the requests | Exactly 6 requests, one per endpoint, each with `X-TYPESENSE-API-KEY` |
 | `unreachable_typesense_reports_unhealthy_and_omits_metrics` | Nothing listening on the port | 200; health 0, raft 0, no `typesense_metrics` or `typesense_stats` |
 | `unauthorized_endpoints_are_omitted` | 401 on metrics, stats and debug; health OK | Health 1, raft 0, metrics and stats omitted |
 | `unhealthy_node_reports_zero_health` | `/health` returns 503 `{"ok": false}` | Health 0 |
@@ -70,6 +73,8 @@ Each test starts a [wiremock](https://docs.rs/wiremock) server playing a Typesen
 | `malformed_response_only_drops_that_endpoint` | `/metrics.json` returns invalid JSON | Only `typesense_metrics` is missing; stats and health are present |
 | `timeout_bounds_a_hung_typesense` | Every endpoint takes 10s; timeout 1s | Answers in under 5s, health 0 |
 | `zero_timeout_means_no_timeout` | `TYPESENSE_TIMEOUT=0` | Requests succeed (0 disables the timeout instead of failing everything) |
+| `exports_version_replication_documents_and_percentiles` | Typesense 30.1-shaped responses from all six endpoints | Version, committed index, queued writes, documents per collection, latency percentiles and cache counts |
+| `older_typesense_without_status_still_exports_the_rest` | `/status` returns 404 and `/debug` has no version | Only the raft index and info metrics disappear; everything else is exported |
 | `root_points_to_metrics` | `GET /` | Mentions `/metrics` |
 | `run_serves_on_the_configured_address` | `server::run` with a chosen port | Serves `/metrics` on that port |
 | `run_fails_when_the_port_is_taken` | Bind port already in use | `run` returns `AddrInUse` instead of panicking |
@@ -84,10 +89,11 @@ These run against the [Docker Compose stack](architecture.md#docker-compose-stac
 
 | Test | What it does | Checks |
 |---|---|---|
-| `cluster_has_one_leader_and_two_followers` | Reads every exporter and Prometheus | All nodes healthy; roles are one leader and two followers; each exporter reports only its own node; system metrics from every node; all 3 exporters scraped |
-| `traffic_is_reported_by_the_node_that_served_it` | Creates a collection through node 1 and searches every node, some searches with `use_cache=true` | Documents replicate to every node; each exporter reports the search traffic its own node served; `cache_hit_ratio` goes above 0 |
+| `cluster_has_one_leader_and_two_followers` | Reads every exporter and Prometheus | All nodes healthy; roles are one leader and two followers; each exporter reports only its own node; system metrics, Typesense version, committed raft index and queued writes from every node; all 3 exporters scraped |
+| `traffic_is_reported_by_the_node_that_served_it` | Creates a collection through node 1 and searches every node, some searches with `use_cache=true` | Documents replicate to every node; every exporter reports 3 documents in the collection; each exporter reports the search traffic its own node served; search p95/p99/max latency reported; `cache_hit_ratio` goes above 0 |
+| `followers_catch_up_and_replication_lag_returns_to_zero` | Writes 20 documents through node 1 | Every node's committed raft index moves past the writes; replication lag (max − min committed index) returns to 0; every node reports 23 documents |
 | `prometheus_loads_the_alert_rules` | Reads Prometheus rules and alerts | All three rules loaded; no alerts while the cluster is healthy |
-| `grafana_dashboards_show_every_node` | Queries Grafana's data source, the same path the panels use | Data source healthy; all three dashboards provisioned; per-core CPU, raft state and health return data for all three nodes |
+| `grafana_dashboards_show_every_node` | Queries Grafana's data source, the same path the panels use | Data source healthy; all four dashboards provisioned; per-core CPU, raft state and health return data for all three nodes |
 | `leader_failure_is_reported_and_a_new_leader_is_elected` | Stops the current leader | Stopped node reports health 0 and raft 0; a different node becomes leader; `TypesenseUnhealthy` goes pending; `TypesenseNoLeader` never fires during the election and clears afterwards |
 | `hung_node_and_quorum_loss_raise_no_leader` | Stops one follower and **pauses** (freezes) the other, so 2 of 3 nodes are gone | The frozen node's exporter answers in under 4s (the scrape timeout) and reports health 0; all exporters still scraped; no node reports leader; `TypesenseNoLeader` goes pending |
 | `parses_exporter_output` | No Docker needed | The test's own Prometheus-format parser handles labels containing spaces |
@@ -115,11 +121,13 @@ make coverage        # summary; fails under 90% of lines
 make coverage-html   # browsable report
 ```
 
-Coverage uses [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) (`cargo install cargo-llvm-cov`, plus `rustup component add llvm-tools-preview`) over unit and integration tests. It is about **93% of lines** on Rust 1.100. The remaining gaps:
+Coverage uses [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) (`cargo install cargo-llvm-cov`, plus `rustup component add llvm-tools-preview`) over unit and integration tests. It is about **98% of lines**. The remaining gaps:
 - `main.rs`, which the e2e suite exercises as the real binary
 - the Ctrl-C / SIGTERM shutdown path
 
 CI publishes the figure to the README badge on every push to `main`.
+
+If the local figure looks wrong (lines marked uncovered that are blank or comments, or more "lines" than the file has), stale build output is mixed in. Run `rm -rf target/llvm-cov-target` and measure again; `cargo llvm-cov clean` alone doesn't always clear it.
 
 ## CI
 

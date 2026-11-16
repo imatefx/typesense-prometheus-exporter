@@ -29,6 +29,8 @@ const GRAFANA: &str = "http://localhost:3000";
 const NODES: [u8; 3] = [1, 2, 3];
 const RAFT_LEADER: f64 = 1.0;
 const RAFT_FOLLOWER: f64 = 4.0;
+/// Must match the Typesense image in docker-compose.yml.
+const TYPESENSE_VERSION: &str = "30.1";
 
 fn typesense_url(node: u8) -> String {
     format!("http://localhost:{}", 8107 + u16::from(node))
@@ -424,6 +426,19 @@ async fn cluster_has_one_leader_and_two_followers() {
                     == Some("system_memory_total_bytes")),
             "exporter-{node} reports system metrics"
         );
+        assert!(
+            samples.iter().any(|s| s.name == "typesense_info"
+                && s.labels.get("version").map(String::as_str) == Some(TYPESENSE_VERSION)),
+            "exporter-{node} reports Typesense {TYPESENSE_VERSION}"
+        );
+        assert!(
+            gauge(&samples, "typesense_raft_committed_index").is_some_and(|i| i > 0.0),
+            "exporter-{node} reports a committed raft index"
+        );
+        assert!(
+            gauge(&samples, "typesense_raft_queued_writes").is_some(),
+            "exporter-{node} reports queued writes"
+        );
     }
     roles.sort_by(f64::total_cmp);
     assert_eq!(roles, [RAFT_LEADER, RAFT_FOLLOWER, RAFT_FOLLOWER]);
@@ -481,6 +496,47 @@ async fn traffic_is_reported_by_the_node_that_served_it() {
         )
         .await;
     }
+
+    for node in NODES {
+        eventually(
+            &format!("exporter-{node} reports 3 documents in e2e_products"),
+            Duration::from_secs(30),
+            || async move {
+                let docs = scrape(node)
+                    .await?
+                    .into_iter()
+                    .find(|s| {
+                        s.name == "typesense_collection_documents"
+                            && s.labels["collection"] == "e2e_products"
+                    })
+                    .map(|s| s.value);
+                ensure(docs == Some(3.0), format!("documents = {docs:?}"))
+            },
+        )
+        .await;
+    }
+
+    eventually(
+        "search latency percentiles are reported",
+        Duration::from_secs(30),
+        || async {
+            let samples = scrape(1).await?;
+            for key in [
+                "search_95Percentile_latency_ms",
+                "search_99Percentile_latency_ms",
+                "search_max_latency_ms",
+            ] {
+                ensure(
+                    samples
+                        .iter()
+                        .any(|s| s.name == "typesense_stats" && s.labels["key"] == key),
+                    format!("{key} missing"),
+                )?;
+            }
+            Ok(())
+        },
+    )
+    .await;
 
     eventually(
         "cached searches produce a non-zero cache_hit_ratio",
@@ -574,6 +630,7 @@ async fn grafana_dashboards_show_every_node() {
         titles,
         [
             "Typesense By Collection",
+            "Typesense Cluster Overview",
             "Typesense Metrics",
             "Typesense Stats"
         ]
@@ -595,6 +652,67 @@ async fn grafana_dashboards_show_every_node() {
         )
         .await;
     }
+}
+
+#[tokio::test]
+async fn followers_catch_up_and_replication_lag_returns_to_zero() {
+    let _stack = stack().await;
+    wait_for_healthy_cluster().await;
+
+    let lag = "max(typesense_raft_committed_index) - min(typesense_raft_committed_index)";
+    let before = prom_query("max(typesense_raft_committed_index)")
+        .await
+        .unwrap()
+        .first()
+        .map(|(_, v)| *v)
+        .expect("committed index in Prometheus");
+
+    seed_collection("e2e_replication").await;
+    for i in 0..20 {
+        let res = typesense(
+            1,
+            reqwest::Method::POST,
+            "/collections/e2e_replication/documents",
+        )
+        .json(&json!({"title": format!("doc {i}"), "price": 1.0}))
+        .send()
+        .await
+        .unwrap();
+        assert!(res.status().is_success(), "write {i}: {}", res.status());
+    }
+
+    eventually(
+        "every node's committed index moves past the writes",
+        Duration::from_secs(60),
+        || async {
+            let indexes = prom_query("typesense_raft_committed_index").await?;
+            ensure(
+                indexes.len() == 3 && indexes.iter().all(|(_, v)| *v >= before + 20.0),
+                format!("committed indexes {indexes:?}, before {before}"),
+            )
+        },
+    )
+    .await;
+    eventually(
+        "replication lag returns to 0",
+        Duration::from_secs(60),
+        || prom_is(lag, 0.0),
+    )
+    .await;
+    eventually(
+        "the collection holds 23 documents on every node",
+        Duration::from_secs(30),
+        || async {
+            let counts =
+                prom_query(r#"typesense_collection_documents{collection="e2e_replication"}"#)
+                    .await?;
+            ensure(
+                counts.len() == 3 && counts.iter().all(|(_, v)| *v == 23.0),
+                format!("{counts:?}"),
+            )
+        },
+    )
+    .await;
 }
 
 #[tokio::test]
